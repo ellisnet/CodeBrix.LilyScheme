@@ -1,0 +1,19 @@
+# Vendored Guile Scheme MUST reach the compiler with LF line endings.
+#
+# Every file under Scheme/ is an <EmbeddedResource>, so whatever bytes are on disk at
+# build time are baked into the assembly and shipped in the NuGet package. A CRLF
+# checkout is therefore not a local inconvenience -- it is a broken artifact.
+#
+# What breaks is not obvious. The CR rides inside the multi-line format-directive
+# STRING LITERALS of ice-9/format.scm, so format's directive parser runs off the end of
+# its string and recurses through format-error until the process dies with an
+# uncatchable stack overflow. See WHY case BINDS ITS KEY ONCE in AGENT-README.txt, which
+# records the same failure shape from a different cause.
+#
+# The committed blobs are already LF; this only stops a Windows checkout
+# (core.autocrlf=true) from expanding them on the way out, which also keeps the vendored
+# files byte-identical to Guile's own so a re-sync stays a straight copy plus cmp.
+*.scm text eol=lf
+
+# The Unicode formal-name table is a deflate stream. Never touch it.
+*.deflate binary

@@ -1,0 +1,930 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+CodeBrix.LilyScheme is a managed, cross-platform Scheme language
+implementation for .NET, derived from the GNU Guile project
+(https://www.gnu.org/software/guile/). It implements the subset of Guile
+needed to run LilyPond's Scheme layer, and it incorporates Guile source
+directly: Guile's own .scm modules are vendored and loaded rather than
+reimplemented, so that LilyPond's Scheme runs unmodified.
+
+This document is the complete attribution and licensing-compliance record
+for this library. Every piece of third-party code, data, script, or asset
+that has been adapted, copied, or pulled into CodeBrix.LilyScheme is
+recorded here, with its authors, source location, exact upstream revision,
+license, the verbatim text of every notice that must travel with it, and
+the list of files in this repository derived from it.
+
+--------------------------------------------------------------------------------
+HOW THIS FILE IS MAINTAINED
+--------------------------------------------------------------------------------
+
+  1. This is a LIVING LEDGER. It is updated in the SAME COMMIT as any
+     change that incorporates, adapts, modifies, or removes third-party
+     source. It is never allowed to fall behind the code.
+
+  2. Every vendored file gets a row in the inventory in section 1.2, even
+     if it shares a license with its neighbours. Guile's module tree is
+     NOT uniformly Free Software Foundation copyright -- section 1.3
+     documents seven distinct additional copyright holders found by audit --
+     so per-file provenance is recorded rather than assumed.
+
+  3. Where an upstream file's own notice does not travel inside the file
+     (psyntax-pp.scm is the critical case), the notice is reproduced here
+     AND attached to the vendored copy. See section 1.3.1.
+
+  4. Nothing is summarised away. If a notice says it must be reproduced in
+     full, it is reproduced in full below, verbatim.
+
+  5. RULE 1 IS CHECKABLE. The standing check is that every .scm under
+     src/CodeBrix.LilyScheme/Scheme/ appears in section 1.2's inventory, its
+     line count, its per-file copyright years and its upstream mapping -- all
+     four places, since a file can be listed in one and missed in the others.
+     The 2026-08-15 audit found ice-9/control.scm vendored, embedded and
+     LOADED (oop/goops.scm reaches it for let/ec) but absent from all four; it
+     was added and the totals corrected. Scheme/lilyscheme/prelude.scm is the
+     port's own and is deliberately not inventoried here.
+
+--------------------------------------------------------------------------------
+STATUS
+--------------------------------------------------------------------------------
+
+  INCORPORATED (2026): the vendored .scm files listed in
+  section 1.2 -- twenty-nine as of the last amendment, all from the GNU Guile
+  source tree -- are present in this repository
+  under src/CodeBrix.LilyScheme/Scheme/, shipped as EMBEDDED RESOURCES. Every
+  one is BYTE-IDENTICAL to its upstream original -- verified with cmp -- and
+  none has been edited. The per-file list is in section 1.4.
+  AMENDED 2026: ice-9/list.scm vendored (rassoc/rassv/rassq --
+  LilyPond's chord-name.scm and define-music-display-methods.scm import it),
+  copied from the same audited revision and cmp-verified.
+  AMENDED 2026 (second amendment): SEVEN more files vendored for the
+  general-Guile surface -- ice-9/rdelim.scm, ice-9/regex.scm,
+  ice-9/getopt-long.scm, ice-9/common-list.scm, ice-9/posix.scm,
+  srfi/srfi-8.scm and srfi/srfi-43.scm -- all copied from the same audited
+  revision and cmp-verified. common-list.scm adds a SEVENTH additional
+  copyright holder (Aubrey Jaffer -- section 1.3.7).
+  AMENDED 2026 (third amendment): ice-9/exceptions.scm vendored for the
+  modern exception API -- exception objects, the standard exception types,
+  the Guile-exception converter table and R7RS guard -- copied from the same
+  audited revision and cmp-verified. FSF copyright only (2019-2020).
+
+  NOT INCORPORATED: no libguile C source has been translated. The C# core --
+  reader, evaluator, numeric tower, module system, primitives, and the Tree-IL
+  evaluator -- was written against R7RS, the SRFI documents, the Guile
+  reference manual, and the Tree-IL node definitions Guile publishes in
+  libguile/expand.h, rather than translated from Guile's C. It is therefore
+  new-in-family under the rule in section 1.1(c) and carries no upstream
+  copyright header.
+
+  Audit year:            2026
+  Guile revision audited: v3.0.11-172-g472589569
+
+================================================================================
+
+1. GNU GUILE
+================================================================================
+
+Project:   GNU Guile -- the GNU Ubiquitous Intelligent Language for Extension
+Source:    https://git.savannah.gnu.org/git/guile.git
+           https://www.gnu.org/software/guile/
+Version:   3.0.11+ (git describe: v3.0.11-172-g472589569)
+License:   LGPL-3.0-or-later (see section 1.3 for per-file exceptions)
+Copyright: Copyright (C) 1995--2026 Free Software Foundation, Inc.
+           -- plus seven additional holders, enumerated in section 1.3
+
+--------------------------------------------------------------------------------
+1.1  TWO KINDS OF INCORPORATION -- THE DISTINCTION MATTERS FOR ATTRIBUTION
+--------------------------------------------------------------------------------
+
+  (a) VENDORED SCHEME SOURCE.
+      Guile's .scm modules are embedded in this library VERBATIM, as
+      embedded resources, and are read at runtime by the LilyScheme
+      reader. They are not translated, not reformatted, not modified.
+      These are literal copies of LGPL-3-licensed material (with the
+      exceptions noted in section 1.3), and they carry their upstream
+      headers unchanged.
+
+  (b) PORTED C SOURCE.
+      Behaviour implemented by libguile in C is reimplemented in C#.
+      Where a C# file is a translation of specific libguile source, it
+      carries on its `namespace` line:
+
+          namespace CodeBrix.LilyScheme.<Area>; //was previously: libguile/<file>.c;
+          // Modified by Jeremy Ellis on <YYYY-MM-DD> as part of the CodeBrix port.
+
+      and preserves the upstream copyright header verbatim above the
+      usings. The modification notice is required by LGPL-3 (via GPL-3
+      section 5(a)) and is NOT satisfied by the provenance comment alone --
+      see section 4.1.
+
+  (c) NOT THIRD PARTY: FRESH CODE WRITTEN FROM PUBLISHED SPECIFICATIONS.
+      Parts of this library are written from scratch against published
+      specifications -- R7RS, the SRFI documents, and the Tree-IL node
+      definitions in Guile's own documentation -- rather than translated
+      from Guile source. Implementing a specification is not a derivative
+      work of another implementation of that specification. Such files are
+      new-in-family, carry no `//was previously:` comment, and carry NO
+      fabricated upstream copyright header. They are not listed in this
+      document. Where a file's status is ambiguous, it is treated as (b).
+
+--------------------------------------------------------------------------------
+1.2  VENDORED .SCM INVENTORY
+--------------------------------------------------------------------------------
+
+  All twenty-nine are present in this repository, verbatim. Line counts as
+  measured at the audited revision. "Extra holders" flags files whose copyright
+  is NOT solely the Free Software Foundation -- see section 1.3. The "Loaded"
+  column records whether the bootstrap actually evaluates the file: boot-9.scm
+  is vendored for reference but cannot be loaded (see the note in section 1.4),
+  and three others are superseded by the prelude or await a GOOPS runtime.
+
+    Upstream path                Lines   License              Extra holders
+    ---------------------------  ------  -------------------  -------------
+    ice-9/boot-9.scm              4,836  LGPL-3.0-or-later    --
+    ice-9/psyntax-pp.scm          3,748  LGPL-3.0-or-later    YES (1.3.1)
+    oop/goops.scm                 3,551  LGPL-3.0-or-later    YES (1.3.2)
+    ice-9/format.scm              1,572  LGPL-3.0-or-later    YES (1.3.3)
+    srfi/srfi-1.scm               1,479  LGPL-3.0-or-later    YES (1.3.4)
+    srfi/srfi-43.scm              1,035  LGPL-3.0-or-later    --
+    ice-9/match.upstream.scm        954  PUBLIC DOMAIN        YES (see sec. 2)
+    ice-9/session.scm               530  LGPL-3.0-or-later    --
+    ice-9/pretty-print.scm          496  LGPL-3.0-or-later    YES (1.3.5)
+    ice-9/exceptions.scm            413  LGPL-3.0-or-later    --
+    ice-9/optargs.scm               381  LGPL-3.0-or-later    YES (1.3.6)
+    ice-9/getopt-long.scm           370  LGPL-3.0-or-later    --
+    ice-9/string-fun.scm            315  LGPL-3.0-or-later    --
+    ice-9/common-list.scm           278  LGPL-3.0-or-later    YES (1.3.7)
+    ice-9/rdelim.scm                241  LGPL-3.0-or-later    --
+    ice-9/regex.scm                 229  LGPL-3.0-or-later    --
+    ice-9/binary-ports.scm          209  LGPL-3.0-or-later    --
+    srfi/srfi-11.scm                146  LGPL-3.0-or-later    --
+    ice-9/control.scm               110  LGPL-3.0-or-later    --
+    rnrs/bytevectors.scm             83  LGPL-3.0-or-later    --
+    ice-9/posix.scm                  75  LGPL-3.0-or-later    --
+    ice-9/and-let-star.scm           73  LGPL-3.0-or-later    --
+    ice-9/quasisyntax.scm           136  MIT-STYLE            YES (see sec. 7)
+    ice-9/match.scm                  63  LGPL-3.0-or-later    --
+    srfi/srfi-39.scm                 55  LGPL-3.0-or-later    --
+    ice-9/list.scm                   36  LGPL-3.0-or-later    --
+    srfi/srfi-2.scm                  31  LGPL-3.0-or-later    --
+    srfi/srfi-8.scm                  31  LGPL-3.0-or-later    --
+    ice-9/receive.scm                26  LGPL-3.0-or-later    --
+                                 -------
+                                 ~21,502
+
+  Per-file FSF copyright years, as they appear in each file's header:
+
+    boot-9.scm          1995-2014, 2016-2026
+    psyntax.scm         1997-1998, 2000-2003, 2005-2006, 2008-2013,
+                        2015-2022, 2024, 2026
+    goops.scm           1998-2003, 2006, 2009-2011, 2013-2015, 2017-2018, 2021
+    format.scm          2010-2013, 2019
+    srfi-1.scm          2001-2006, 2009-2011, 2014, 2020, 2021
+    session.scm         1997, 2000, 2001, 2003, 2006, 2009-2013
+    pretty-print.scm    2001, 2004, 2006, 2009, 2010, 2012-2014, 2023
+    optargs.scm         1997-1999, 2001, 2002, 2004, 2006, 2009-2011
+    string-fun.scm      1995-1997, 1999, 2001, 2006
+    binary-ports.scm    2009-2011, 2013, 2016, 2019, 2021, 2023, 2024
+    srfi-11.scm         2000-2002, 2004, 2006, 2009
+    bytevectors.scm     2009, 2010
+    and-let-star.scm    1999, 2001, 2004, 2006, 2013, 2015
+    match.scm           2010-2012, 2020
+    srfi-39.scm         2004-2006, 2008, 2011
+    list.scm            2003, 2006
+    srfi-2.scm          2001, 2002, 2006
+    receive.scm         2000, 2001, 2004, 2006, 2010, 2011
+    control.scm         2010, 2011, 2013
+    rdelim.scm          1997, 1999, 2000, 2001, 2006, 2010, 2013, 2014
+    regex.scm           1997, 1999, 2001, 2004, 2005, 2006, 2008, 2010
+    getopt-long.scm     1998, 2001, 2006, 2009, 2011
+    exceptions.scm      2019-2020
+    common-list.scm     1995, 1996, 1997, 2001, 2006
+    posix.scm           1999, 2006
+    srfi-8.scm          2000, 2001, 2002, 2006
+    srfi-43.scm         2014, 2018
+
+  Named authors and contributors credited in these files, beyond "Free
+  Software Foundation, Inc.":
+
+    Martin Grabmueller <mgrabmue@cs.tu-berlin.de>     srfi-1.scm (author)
+    Maciej Stachowiak <mstachow@alum.mit.edu>         optargs.scm (contributor)
+    Jose Antonio Ortega Ruiz <jao@gnu.org>            srfi-39.scm (author)
+    Ludovic Courtes <ludo@gnu.org>                    binary-ports.scm,
+                                                      rnrs/bytevectors.scm (author)
+    Russ McManus                                      getopt-long.scm (author;
+                                                      rewritten by Thien-Thi Nguyen)
+    Mark H Weaver <mhw@netris.org>                    srfi-43.scm (author)
+
+--------------------------------------------------------------------------------
+1.3  ADDITIONAL COPYRIGHT HOLDERS FOUND BY AUDIT
+--------------------------------------------------------------------------------
+
+  Guile's module tree is NOT uniformly FSF-copyright. Six of the files in
+  the vendor set carry a second copyright holder, an additional set of
+  terms, or an origin outside the FSF. Each is documented below with its
+  notice reproduced verbatim. These notices MUST be preserved.
+
+................................................................................
+1.3.1  psyntax-pp.scm -- Chez Scheme / Cadence Research Systems
+................................................................................
+
+  *** CRITICAL: THIS FILE CARRIES NO COPYRIGHT HEADER OF ITS OWN. ***
+
+  ice-9/psyntax-pp.scm is Guile's macro expander, already macro-expanded
+  into core Scheme so that it can be loaded by a Scheme implementation
+  that does not yet have a macro expander. CodeBrix.LilyScheme loads it
+  for exactly that reason -- it is the bootstrap that makes running
+  LilyPond's Scheme unmodified possible at all.
+
+  The file begins directly with executable code. Its notice lives in the
+  UNEXPANDED ice-9/psyntax.scm, and the terms of the original Chez Scheme
+  grant require that the notice travel with all copies. Vendoring
+  psyntax-pp.scm without deliberately attaching the notice below would
+  violate those terms. This is easy to miss precisely because the file
+  looks like it has no notice to preserve.
+
+  Both notices below must be attached to the vendored copy of
+  psyntax-pp.scm, as a header comment block.
+
+  --- Guile's notice, from ice-9/psyntax.scm lines 3-20, verbatim: ---
+
+    Copyright (C) 1997-1998,2000-2003,2005-2006,2008-2013,2015-2022,2024,2026
+      Free Software Foundation, Inc.
+
+    This library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as
+    published by the Free Software Foundation, either version 3 of the
+    License, or (at your option) any later version.
+
+    This library is distributed in the hope that it will be useful, but
+    WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+    Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public
+    License along with this program.  If not, see
+    <http://www.gnu.org/licenses/>.
+
+  --- The original Chez Scheme notice, from ice-9/psyntax.scm lines
+      22-40, verbatim. Its own terms require reproduction IN FULL: ---
+
+    Originally extracted from Chez Scheme Version 5.9f
+    Authors: R. Kent Dybvig, Oscar Waddell, Bob Hieb, Carl Bruggeman
+
+    Copyright (c) 1992-1997 Cadence Research Systems
+    Permission to copy this software, in whole or in part, to use this
+    software for any lawful purpose, and to redistribute this software
+    is granted subject to the restriction that all copies made of this
+    software must include this copyright notice in full.  This software
+    is provided AS IS, with NO WARRANTY, EITHER EXPRESS OR IMPLIED,
+    INCLUDING BUT NOT LIMITED TO IMPLIED WARRANTIES OF MERCHANTABILITY
+    OR FITNESS FOR ANY PARTICULAR PURPOSE.  IN NO EVENT SHALL THE
+    AUTHORS BE LIABLE FOR CONSEQUENTIAL OR INCIDENTAL DAMAGES OF ANY
+    NATURE WHATSOEVER.
+
+    This code is based on "Syntax Abstraction in Scheme"
+    by R. Kent Dybvig, Robert Hieb, and Carl Bruggeman.
+    Lisp and Symbolic Computation 5:4, 295-326, 1992.
+    <http://www.cs.indiana.edu/~dyb/pubs/LaSC-5-4-pp295-326.pdf>
+
+................................................................................
+1.3.2  goops.scm -- Erick Gallesio / STk
+................................................................................
+
+  oop/goops.scm carries a SECOND copyright holder alongside the FSF, and
+  states its origin in another project entirely. Verbatim from the file
+  header (lines 3-5 and 24-25):
+
+    Copyright (C) 1998-2003,2006,2009-2011,2013-2015,2017-2018,2021
+      Free Software Foundation, Inc.
+    Copyright (C) 1993-1998 Erick Gallesio - I3S-CNRS/ESSI <eg@unice.fr>
+
+    This file was based upon stklos.stk from the STk distribution
+    version 4.0.1 by Erick Gallesio <eg@unice.fr>.
+
+  Licensed LGPL-3.0-or-later. Both copyright lines must be preserved on
+  the vendored copy.
+
+................................................................................
+1.3.3  format.scm -- Dirk Lutzebaeck, SLIB, Ken Dickey, Aubrey Jaffer
+................................................................................
+
+  ice-9/format.scm is a Common-Lisp-style text formatter that came into
+  Guile from SLIB and was ORIGINALLY PUBLIC DOMAIN before the FSF applied
+  the LGPL to Guile's copy. Verbatim from the file header (lines 1-2 and
+  19-29):
+
+    "format.scm" Common LISP text output formatter for SLIB
+    Copyright (C) 2010-2013,2019 Free Software Foundation, Inc.
+
+    This code was orignally in the public domain.
+
+    Written 1992-1994 by Dirk Lutzebaeck (lutzeb@cs.tu-berlin.de).
+
+    Authors of the version from SLIB (< 1.4) were Ken Dickey and Aubrey
+    Jaffer.
+
+    Assimilated into Guile May 1999.
+
+    Please don't bother the original authors with bug reports, though;
+    send them to bug-guile@gnu.org.
+
+  (The spelling "orignally" is upstream's and is reproduced as found.)
+
+  The copy vendored here is Guile's, and is therefore taken under
+  LGPL-3.0-or-later. The public-domain history is recorded because the
+  attribution to Lutzebaeck, Dickey and Jaffer must survive.
+
+................................................................................
+1.3.4  srfi-1.scm -- Olin Shivers' reference implementation
+................................................................................
+
+  srfi/srfi-1.scm mixes FSF-copyright code with parts taken from Olin
+  Shivers' SRFI-1 reference implementation, which carries its OWN terms
+  -- separate from and additional to the LGPL. Verbatim from the file
+  header (lines 3 and 19-24):
+
+    Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2009, 2010, 2011,
+      2014, 2020, 2021 Free Software Foundation, Inc.
+
+    Some parts from the reference implementation, which is
+    Copyright (c) 1998, 1999 by Olin Shivers. You may do as you please with
+    this code as long as you do not remove this copyright notice or
+    hold me liable for its use.
+
+    Author: Martin Grabmueller <mgrabmue@cs.tu-berlin.de>
+    Date: 2001-06-06
+
+  Shivers' grant is permissive but is explicitly conditioned on the
+  notice not being removed. It must be preserved on the vendored copy.
+
+................................................................................
+1.3.5  pretty-print.scm -- Marc Feeley / genwrite.scm
+................................................................................
+
+  Parts of ice-9/pretty-print.scm derive from a separate program with a
+  separate copyright holder. Verbatim from the file (lines 3-4 and 58-60):
+
+    Copyright (C) 2001, 2004, 2006, 2009, 2010, 2012, 2013, 2014, 2023
+      Free Software Foundation, Inc.
+
+    Parts of pretty-print derived from "genwrite.scm", from SLIB.
+    Copyright (c) 1991, Marc Feeley
+    Author: Marc Feeley (feeley@iro.umontreal.ca)
+
+  Licensed LGPL-3.0-or-later. Feeley's copyright line must be preserved.
+
+................................................................................
+1.3.6  optargs.scm -- Maciej Stachowiak
+................................................................................
+
+  Copyright is FSF, but the file names an outside contributor whose credit
+  must survive. Verbatim from the file header (lines 3 and 19):
+
+    Copyright (C) 1997, 1998, 1999, 2001, 2002, 2004, 2006, 2009, 2010,
+      2011 Free Software Foundation, Inc.
+
+    Contributed by Maciej Stachowiak <mstachow@alum.mit.edu>
+
+  Licensed LGPL-3.0-or-later.
+
+1.3.7  common-list.scm -- Aubrey Jaffer / SLIB comlist.scm
+
+  The body of ice-9/common-list.scm is Aubrey Jaffer's "comlist.scm"
+  (Implementation of COMMON LISP list functions for Scheme) from SLIB, and the
+  file carries his notice alongside the FSF's. His conditions require the
+  notice to travel in full with any copy, so it is reproduced here verbatim
+  (the vendored file, shipped as an embedded resource, carries it too):
+
+    ;;"comlist.scm" Implementation of COMMON LISP list functions for Scheme
+    ; Copyright (C) 1991, 1993, 1995 Aubrey Jaffer.
+    ;
+    ;Permission to copy this software, to redistribute it, and to use it
+    ;for any purpose is granted, subject to the following restrictions and
+    ;understandings.
+    ;
+    ;1.  Any copy made of this software must include this copyright notice
+    ;in full.
+    ;
+    ;2.  I have made no warrantee or representation that the operation of
+    ;this software will be error-free, and I am under no obligation to
+    ;provide any services, by way of maintenance, update, or otherwise.
+    ;
+    ;3.  In conjunction with products arising from the use of this
+    ;material, there shall be no use of my name in any advertising,
+    ;promotional, or sales literature without prior written consent in
+    ;each case.
+
+--------------------------------------------------------------------------------
+1.4  SOURCE DERIVED FROM GNU GUILE (IN THIS REPOSITORY)
+--------------------------------------------------------------------------------
+
+  Vendored .scm (embedded resources, all VERBATIM -- verified byte-identical
+  against Guile v3.0.11-172-g472589569 with cmp):
+
+    src/CodeBrix.LilyScheme/Scheme/ice-9/psyntax-pp.scm      <- ice-9/psyntax-pp.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/boot-9.scm          <- ice-9/boot-9.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/format.scm          <- ice-9/format.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/match.scm           <- ice-9/match.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/match.upstream.scm  <- ice-9/match.upstream.scm  (see section 2)
+    src/CodeBrix.LilyScheme/Scheme/ice-9/quasisyntax.scm     <- ice-9/quasisyntax.scm     (see section 7)
+    src/CodeBrix.LilyScheme/Scheme/ice-9/optargs.scm         <- ice-9/optargs.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/receive.scm         <- ice-9/receive.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/pretty-print.scm    <- ice-9/pretty-print.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/and-let-star.scm    <- ice-9/and-let-star.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/string-fun.scm      <- ice-9/string-fun.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/binary-ports.scm    <- ice-9/binary-ports.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/session.scm         <- ice-9/session.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/rdelim.scm          <- ice-9/rdelim.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/regex.scm           <- ice-9/regex.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/getopt-long.scm     <- ice-9/getopt-long.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/exceptions.scm      <- ice-9/exceptions.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/common-list.scm     <- ice-9/common-list.scm     (see section 1.3.7)
+    src/CodeBrix.LilyScheme/Scheme/ice-9/posix.scm           <- ice-9/posix.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/list.scm            <- ice-9/list.scm
+    src/CodeBrix.LilyScheme/Scheme/ice-9/control.scm         <- ice-9/control.scm
+    src/CodeBrix.LilyScheme/Scheme/oop/goops.scm             <- oop/goops.scm
+    src/CodeBrix.LilyScheme/Scheme/srfi/srfi-1.scm           <- srfi/srfi-1.scm
+    src/CodeBrix.LilyScheme/Scheme/srfi/srfi-2.scm           <- srfi/srfi-2.scm
+    src/CodeBrix.LilyScheme/Scheme/srfi/srfi-8.scm           <- srfi/srfi-8.scm
+    src/CodeBrix.LilyScheme/Scheme/srfi/srfi-11.scm          <- srfi/srfi-11.scm
+    src/CodeBrix.LilyScheme/Scheme/srfi/srfi-39.scm          <- srfi/srfi-39.scm
+    src/CodeBrix.LilyScheme/Scheme/srfi/srfi-43.scm          <- srfi/srfi-43.scm
+    src/CodeBrix.LilyScheme/Scheme/rnrs/bytevectors.scm      <- rnrs/bytevectors.scm
+
+    27 files, 20,953 lines. (The total excludes ice-9/quasisyntax.scm, which
+    is not Guile-derived -- see section 7.)  ice-9/control.scm was vendored
+    without being inventoried here and was added in the 2026-08-15 audit; it
+    is loaded, oop/goops.scm reaching it for let/ec.
+
+  NOTE ON boot-9.scm: it is vendored for reference and completeness but is NOT
+  loaded. boot-9 builds Guile's module system, record types, port types and
+  exception hierarchy from scratch on top of low-level vtable layouts, and it
+  opens by asserting that (current-module) returns #f -- it is designed to run
+  before any module system exists. LilyScheme provides the module system from
+  C# instead, so boot-9 cannot be loaded verbatim. The derived syntax it would
+  otherwise supply is provided by
+  src/CodeBrix.LilyScheme/Scheme/lilyscheme/prelude.scm, which is NEW-IN-FAMILY
+  and not derived from Guile -- see the note below.
+
+  C# translated from libguile C source:
+    (none -- the C# core is new-in-family, written against published
+    specifications rather than translated. See STATUS above and section 1.1(c).)
+
+  INTERFACE FACTS READ OUT OF libguile (not translated code):
+    src/CodeBrix.LilyScheme/Primitives/PrimitiveGenerics.cs carries the list of
+    procedure names Guile declares GENERIC-CAPABLE. The list was determined by
+    reading the SCM_PRIMITIVE_GENERIC declarations in libguile/*.c and the two
+    SCM_GPROC declarations in libguile/print.c, at the version named above,
+    rather than recalled or guessed -- the set is not documented in one place
+    and getting it wrong is silent (an undeclared name simply never dispatches).
+    What was taken is the roster of public procedure names, which is an
+    interface fact; no libguile code was translated, and the dispatch itself is
+    written against the documented GOOPS behaviour of add-method! /
+    enable-primitive-generic! as it appears in the vendored oop/goops.scm.
+
+    src/CodeBrix.LilyScheme/Runtime/SchemeModule.cs (the Printer's program
+    printing) reproduces two OBSERVABLE BEHAVIOURS of Guile's procedure printer,
+    both of which a consumer's output depends on byte for byte:
+
+      * the external representations themselves -- "#<procedure NAME (formals)>",
+        "#<procedure ADDR at FILE:LINE:COLUMN (formals)>" and the low-level
+        "#<program ADDR CODE>" -- whose shapes were read out of
+        module/system/vm/program.scm's print-program and libguile/programs.c's
+        scm_i_program_print at the version named above; and
+
+      * the re-entry latch in that same C function, a file-static flag set around
+        the call out to the Scheme printer and never restored when that call
+        exits non-locally, after which every procedure in the process prints in
+        the low-level form.
+
+    What was taken is the OUTPUT FORMAT and the described behaviour, which are
+    interface facts a compatible implementation has to match; no Guile code was
+    translated, and the C# is written against those facts.
+
+    src/CodeBrix.LilyScheme/Primitives/SoftPortPrimitives.cs carries a soft
+    output port's buffer size (1024 bytes) and transfer quantum (252 bytes).
+    Neither was read out of Guile at all: both were MEASURED by running the
+    pinned oracle binary over eleven starting buffer fills and recording the
+    resulting flush sequences, and the model was then confirmed by predicting
+    four fills it had not been shown. The constants are observations of
+    behaviour, not transcribed source.
+
+  Test source derived from Guile:
+    (none -- the tests are new-in-family)
+
+--------------------------------------------------------------------------------
+1.5  GNU GUILE LICENSE TEXT
+--------------------------------------------------------------------------------
+
+  GNU Guile is distributed under the GNU Lesser General Public License,
+  version 3 or later.
+
+  Because LGPL-3.0 incorporates the terms of GPL-3.0 by reference -- its
+  opening paragraph reads "This version of the GNU Lesser General Public
+  License incorporates the terms and conditions of version 3 of the GNU
+  General Public License, supplemented by the additional permissions
+  listed below" -- BOTH license texts travel with this work:
+
+    LICENSE       full text of the GNU LGPL version 3
+    LICENSE.GPL   full text of the GNU GPL version 3
+
+  Both are at the root of this repository and both are packed into the
+  NuGet package. This is the same license CodeBrix.LilyScheme itself is
+  distributed under.
+
+================================================================================
+
+2. ice-9/match.upstream.scm -- PORTABLE HYGIENIC PATTERN MATCHER
+================================================================================
+
+Project:   match.scm -- a portable hygienic pattern matcher
+Source:    Redistributed inside the GNU Guile tree at
+           module/ice-9/match.upstream.scm.
+           Upstream origin: Alex Shinn's portable matcher, a full superset
+           of Andrew Wright's `match` package
+           (http://www.cs.indiana.edu/scheme-repository/code.match.html),
+           written in fully portable syntax-rules and thus hygiene-preserving.
+Version:   as shipped in Guile v3.0.11-172-g472589569
+License:   PUBLIC DOMAIN
+Copyright: None asserted -- placed in the public domain by the author
+
+Recorded as its own top-level section, separate from section 1, because
+although this file ships inside the Guile tree it is NOT under Guile's
+LGPL and NOT FSF-copyright. Mis-filing it under section 1 would
+misattribute it.
+
+  --- Verbatim dedication, from lines 1-4 of the file: ---
+
+    match.scm -- portable hygienic pattern matcher
+
+    This code is written by Alex Shinn and placed in the
+    Public Domain.  All warranties are disclaimed.
+
+Although public-domain material imposes no legal obligation to retain the
+notice, this project retains it. Attribution to Alex Shinn survives on the
+vendored copy.
+
+IMPORTANT DISTINCTION: ice-9/match.scm -- the 63-line Guile wrapper that
+loads match.upstream.scm and adds record-matching support -- IS
+FSF-copyright and LGPL-3.0-or-later. It is covered by section 1, not by
+this section. The two files must not be conflated.
+
+LilyPond uses `ice-9 match` at 8 import sites, so both files are in scope.
+
+Source derived from match.upstream.scm (in this repository):
+  (none yet)
+
+================================================================================
+
+3. COMPONENTS EVALUATED AND DELIBERATELY NOT USED
+================================================================================
+
+Recorded so that the licensing analysis behind the choice is not lost, and
+so that no future contributor reintroduces a rejected component.
+
+  IronScheme
+    Core:      BSD-3-Clause -- acceptable on its own.
+    Problem:   IronScheme.csproj takes a hard ProjectReference on
+               Microsoft.Scripting, a fork of the DLR licensed Ms-PL,
+               roughly 25,700 lines -- larger than the BSD core -- and used
+               from 39 call sites. It is the CIL emission layer, not a shim.
+    Verdict:   Ms-PL is GPL-incompatible (per the FSF). Ms-PL 3(D) requires
+               compiled distribution "under a license that complies with
+               this license"; the GPL requires source under the GPL. The two
+               cannot be reconciled. Splitting into separate repositories or
+               NuGet packages does NOT cure this -- compatibility is judged
+               on the combined work, not on package boundaries. A GPL-3
+               section 7 additional-permission cannot save it either,
+               because section 7 only permits adding permissions to material
+               you yourself authored, and Guile-derived material is not ours
+               to grant over.
+    NOT USED.
+
+  Schemy (Microsoft)
+    License:   MIT -- acceptable.
+    Verdict:   Rejected on technical grounds only: .NET Framework 4.5.2
+               only, unmaintained since 2018, and lacking call/cc,
+               syntax-rules, define-syntax, dynamic-wind and a numeric
+               tower.
+    NOT USED.
+
+  CScheme (lontivero), CSLisp (rzubek)
+    Licenses:  MIT and BSD-3-Clause respectively -- both acceptable.
+    Verdict:   Evaluated as possible starting skeletons; neither is
+               vendored. No code from either is present in this repository.
+    NOT USED.
+
+================================================================================
+
+4. LGPL-3.0 COMPLIANCE OBLIGATIONS OBSERVED BY THIS PROJECT
+================================================================================
+
+Recorded explicitly so that compliance is auditable rather than assumed.
+This section tracks the obligations that apply because this library
+incorporates LGPL-3.0-or-later material.
+
+--------------------------------------------------------------------------------
+4.1  PER-FILE MODIFICATION NOTICES
+--------------------------------------------------------------------------------
+
+  Obligation: LGPL-3.0, via the incorporated GPL-3.0 section 5(a) -- "The
+  work must carry prominent notices stating that you modified it, and
+  giving a relevant date."
+
+  A `//was previously: <upstream>;` provenance comment identifies the
+  upstream origin but does NOT by itself satisfy this obligation, because
+  it states neither WHO modified the file nor WHEN. Every file translated
+  or adapted from Guile source therefore carries, immediately below the
+  provenance comment:
+
+      // Modified by Jeremy Ellis on <YYYY-MM-DD> as part of the CodeBrix port.
+
+  followed by a brief itemisation of what changed where the change is
+  substantive.
+
+  Verbatim-vendored .scm files are NOT modified, so this obligation does
+  not attach to them. If a vendored .scm is ever edited, it stops being
+  verbatim and MUST gain a modification notice and a row in section 4.6.
+
+--------------------------------------------------------------------------------
+4.2  BOTH LICENSE TEXTS SHIP
+--------------------------------------------------------------------------------
+
+  LGPL-3.0 is about a page and a half because most of its obligations are
+  imported from GPL-3.0 by reference. A LICENSE file containing only the
+  LGPL-3.0 text is INCOMPLETE.
+
+    LICENSE       GNU LGPL version 3, full text
+    LICENSE.GPL   GNU GPL version 3, full text
+
+  Both at the repository root; both packed into the .nupkg so that a
+  consumer who downloads only the package -- and never visits the GitHub
+  repository -- can still read the full terms and the warranty disclaimer,
+  and can therefore satisfy their own downstream obligations.
+
+--------------------------------------------------------------------------------
+4.3  SOURCE AVAILABILITY
+--------------------------------------------------------------------------------
+
+  Complete corresponding source for this library is published at
+  https://github.com/ellisnet/CodeBrix.LilyScheme and is intrinsically
+  available to any recipient of the binary. Vendored Guile .scm files are
+  present in that repository in their embedded-resource form, unmodified
+  and readable.
+
+  Upstream Guile source, for comparison, is at
+  https://git.savannah.gnu.org/git/guile.git at revision
+  v3.0.11-172-g472589569.
+
+--------------------------------------------------------------------------------
+4.4  THE LIBRARY MUST REMAIN RELINKABLE
+--------------------------------------------------------------------------------
+
+  LGPL-3.0 section 4 requires that a consumer combining this library into
+  their own work be able to replace it with a modified version. This
+  library is shipped as an ordinary managed assembly inside a NuGet
+  package. Consumers reference it dynamically; nothing prevents them
+  substituting their own build.
+
+  Consequence for this project: CodeBrix.LilyScheme must NOT be merged,
+  ILMerged, ILRepack'd, or otherwise statically fused into a consuming
+  assembly, and must not be shipped only as a trimmed or single-file
+  artifact from which it cannot be replaced. Consuming projects --
+  including CodeBrix.LilyPort -- take an ordinary assembly reference.
+
+--------------------------------------------------------------------------------
+4.5  COPYRIGHT LINE HYGIENE
+--------------------------------------------------------------------------------
+
+  This project's own copyright line --
+
+      Copyright (c) 2026 Jeremy Ellis and contributors
+
+  -- is added ADDITIVELY. It never replaces, edits, or displaces an
+  upstream copyright line. Upstream headers are preserved verbatim.
+
+--------------------------------------------------------------------------------
+4.6  TRADEMARK AND NAMING
+--------------------------------------------------------------------------------
+
+  Copyleft licenses grant no trademark rights. "Guile" therefore does NOT
+  appear in this library's assembly name, package ID, namespace, or type
+  names, because doing so would imply an affiliation with or endorsement by
+  the GNU project that does not exist. Guile is named in prose, in
+  documentation, and in this file, purely as factual attribution of origin.
+
+  "Scheme" is a language name (MIT, 1975, and the RnRS reports) and is free
+  to use.
+
+  The package ID suffix `.LgplLicenseForever` is a CodeBrix family
+  convention that travels the license identification with the package name;
+  it forms no part of the namespace.
+
+--------------------------------------------------------------------------------
+4.7  MODIFICATIONS MADE TO VENDORED MATERIAL
+--------------------------------------------------------------------------------
+
+  Vendored .scm files that have been edited away from verbatim upstream:
+
+    (none -- all eighteen are verbatim, verified with cmp against
+    Guile v3.0.11-172-g472589569)
+
+  NEW-IN-FAMILY Scheme shipped alongside the vendored files:
+
+    Scheme/lilyscheme/prelude.scm    Copyright (c) 2026 Jeremy Ellis and
+                                     contributors. Written against R7RS and the
+                                     Guile reference manual; NOT derived from
+                                     boot-9.scm or any other Guile source. It
+                                     supplies the derived syntax (and, or, cond,
+                                     case, when, unless, do, let-values,
+                                     define-values, receive, and-let*, while,
+                                     parameterize, cond-expand, defmacro, and the
+                                     define-module / use-modules / define-public
+                                     family) that boot-9 would otherwise provide.
+
+  If this table ever gains a row, that file also needs a per-file
+  modification notice per section 4.1.
+
+================================================================================
+
+5. RELATED REPOSITORIES AND THE SEPARATION OF MATERIAL
+================================================================================
+
+CodeBrix.LilyScheme is consumed by CodeBrix.LilyPort, a separate
+GPL-3.0-or-later port of LilyPond which carries its own
+THIRD-PARTY-NOTICES.txt covering the LilyPond material it incorporates.
+
+The separation is deliberate and is a licensing decision, not a filing
+convenience:
+
+    Guile-derived source   -> ONLY in CodeBrix.LilyScheme  (LGPL-3.0-or-later)
+    LilyPond-derived source-> ONLY in CodeBrix.LilyPort    (GPL-3.0-or-later)
+
+Keeping LilyPond material out of this repository keeps CodeBrix.LilyScheme
+usable on its own terms: LGPL-3 permits a proprietary or permissively
+licensed consumer to link against it, which GPL-3 would not. A single
+LilyPond-derived file placed here would forfeit that permanently.
+
+GPL-3 consumers such as CodeBrix.LilyPort may consume LGPL-3 material
+freely; the combination is explicitly contemplated by LGPL-3 section 2.
+
+================================================================================
+
+6. THE UNICODE CHARACTER DATABASE -- UNICODE LICENSE
+================================================================================
+
+    src/CodeBrix.LilyScheme/Unicode/unicode-names.deflate
+
+is a DERIVED TABLE, not a copy. It holds the code point and the formal
+character name of every row of UnicodeData.txt that carries a literal name,
+and nothing else: the other thirteen fields of each row are dropped, as are
+the rows whose name field is bracketed (<control>, <CJK Ideograph, First>,
+and the rest of the algorithmically-named ranges). 34,828 names, from
+
+    Unicode Character Database, Version 15.1.0
+
+which is recorded in the table's own first line together with a statement
+that it is modified -- so both travel with the bytes and not only with this
+file.
+
+    Copyright (c) 1991-2023 Unicode, Inc. All rights reserved.
+    Distributed under the Terms of Use in https://www.unicode.org/copyright.html
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of the Unicode data files and any associated documentation (the
+    "Data Files") or Unicode software and any associated documentation (the
+    "Software") to deal in the Data Files or Software without restriction,
+    including without limitation the rights to use, copy, modify, merge,
+    publish, distribute, and/or sell copies of the Data Files or Software,
+    and to permit persons to whom the Data Files or Software are furnished
+    to do so, provided that either (a) this copyright and permission notice
+    appear with all copies of the Data Files or Software, or (b) this
+    copyright and permission notice appear in associated Documentation.
+
+    THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF
+    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+    WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+    NONINFRINGEMENT OF THIRD PARTY RIGHTS. IN NO EVENT SHALL THE COPYRIGHT
+    HOLDER OR HOLDERS INCLUDED IN THIS NOTICE BE LIABLE FOR ANY CLAIM, OR
+    ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES
+    WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+    ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA FILES OR
+    SOFTWARE.
+
+    Except as contained in this notice, the name of a copyright holder
+    shall not be used in advertising or otherwise to promote the sale, use
+    or other dealings in these Data Files or Software without prior written
+    authorization of the copyright holder.
+
+WHY IT IS HERE, AND WHY IT DOES NOT BREAK SECTION 5'S SEPARATION.  Guile's
+(ice-9 unicode) exports char->formal-name and formal-name->char and
+implements both in libguile/unicode.c over GNU libunistring's uniname.
+LilyScheme provides that module from C# for the same reason it provides
+(ice-9 iconv) and (ice-9 soft-ports) -- Guile implements them in C -- and a
+managed runtime has no character-name table to borrow: .NET exposes Unicode
+categories and casing but not names.
+
+Section 5's rule is about LICENSE, and it is one-directional: LilyPond-derived
+material must stay out of this repository so that LGPL-3's permission for a
+proprietary or permissively licensed consumer to link survives. This table is
+neither Guile-derived nor LilyPond-derived, and the Unicode License is
+permissive, so it imposes nothing on a downstream consumer beyond the notice
+above -- which ships inside the package, in this file.
+
+NO libunistring CODE IS COPIED.  What is reproduced is the DATA, from Unicode's
+own files, plus the observed RULE that Guile answers #f rather than deriving
+the algorithmic CJK and Hangul names -- measured, not assumed, against 316
+occurrences across 79 distinct characters in output produced by Guile.
+
+    generated by: tools/unicode-names/generate-unicode-names.py
+                  (which has a check mode fencing the committed asset against
+                  its source, and records the UCD version in the asset)
+    consumed by:  src/CodeBrix.LilyScheme/Unicode/UnicodeCharacterNames.cs
+                  src/CodeBrix.LilyScheme/Primitives/UnicodePrimitives.cs
+
+================================================================================
+
+7. ice-9/quasisyntax.scm -- QUASISYNTAX IN TERMS OF SYNTAX-CASE
+================================================================================
+
+Project:   Quasisyntax in terms of syntax-case
+Source:    Redistributed inside the GNU Guile tree at
+           module/ice-9/quasisyntax.scm.
+           Upstream origin: <http://www.het.brown.edu/people/andre/macros/>
+Author:    Andre van Tonder
+Copyright: Copyright (c) 2006 Andre van Tonder. All Rights Reserved.
+License:   MIT-style permissive (the "Expat" form), NOT LGPL.
+Vendored:  src/CodeBrix.LilyScheme/Scheme/ice-9/quasisyntax.scm
+           VERBATIM -- verified byte-identical against Guile
+           v3.0.11-172-g472589569 with cmp.
+
+WHY IT IS VENDORED
+------------------
+Guile does not define quasisyntax in psyntax. It is pulled into the core
+environment by boot-9.scm line 424:
+
+    (include-from-path "ice-9/quasisyntax")
+
+CodeBrix.LilyScheme replaces boot-9.scm with its own prelude (see the boot-9
+note in section 1.4), so the same include has to be performed by that prelude
+or #` templates have no expander. LilyPond's scm/music-functions.scm is built
+on #` templates, so this is not optional.
+
+The file is dual-situated: it is distributed as part of Guile, which is
+LGPL-3.0-or-later, but it carries its own more permissive grant from its
+author. The permissive grant is reproduced below because that is the license
+the file itself offers, and it is compatible with LGPL-3.0-or-later
+redistribution.
+
+NOTICE, REPRODUCED VERBATIM
+---------------------------
+The following is copied without alteration from the head of the file:
+
+    ;; Quasisyntax in terms of syntax-case.
+    ;;
+    ;; Code taken from
+    ;; <http://www.het.brown.edu/people/andre/macros/index.html>;
+    ;; Copyright (c) 2006 Andre van Tonder. All Rights Reserved.
+    ;;
+    ;; Permission is hereby granted, free of charge, to any person
+    ;; obtaining a copy of this software and associated documentation
+    ;; files (the "Software"), to deal in the Software without
+    ;; restriction, including without limitation the rights to use, copy,
+    ;; modify, merge, publish, distribute, sublicense, and/or sell copies
+    ;; of the Software, and to permit persons to whom the Software is
+    ;; furnished to do so, subject to the following conditions:
+    ;;
+    ;; The above copyright notice and this permission notice shall be
+    ;; included in all copies or substantial portions of the Software.
+
+    (The warranty disclaimer that follows in the file is reproduced by the
+    file itself, which ships verbatim inside the assembly as an embedded
+    resource.)
+
+COMPLIANCE
+----------
+The permission notice above must accompany all copies or substantial portions
+of the software. It is reproduced here, and the file ships verbatim as an
+embedded resource inside CodeBrix.LilyScheme.dll, which carries it too.
+
+Source derived from quasisyntax.scm (in this repository):
+    NONE. The file is loaded verbatim; no C# is translated from it.
+
+================================================================================
+
+Jeremy Ellis and contributors license the CodeBrix.LilyScheme project
+to you under the terms set forth in the LICENSE file, which is located at
+the root of this repository.
+
+If you have any questions about any third-party code or services referenced
+here, or if you believe that any third-party code has been included in
+CodeBrix.LilyScheme in error, please open a new issue at:
+https://github.com/ellisnet/CodeBrix.LilyScheme/issues
+
+================================================================================
+
+END OF THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+================================================================================
