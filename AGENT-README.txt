@@ -70,6 +70,32 @@ TWO SHARP EDGES WORTH KNOWING
   source forms, every macro definition silently stores an unevaluated
   struct and the macro is never found.
 
+A WRONG-TYPED PRIMITIVE ARGUMENT RAISES wrong-type-arg, NEVER A HOST EXCEPTION
+------------------------------------------------------------------------------
+Guile validates every primitive argument and raises a catchable
+wrong-type-arg naming the procedure and the argument position; Scheme code
+legitimately catches that key. A bare C# cast in a primitive body performs
+the same check the .NET way, and the resulting InvalidCastException escapes
+to the host where no Scheme catch can see it. Two layers keep that from
+happening here:
+
+* Primitives.TypeChecks (AsSymbol / AsChar / AsKeyword / AsMutableString)
+  raises the POSITIONED error -- "(subr "Wrong type argument in position
+  N: ~S" (value) #f)" -- and is what a primitive body should use instead of
+  a cast. StringPrimitives.Text is the older sibling for read-only text
+  arguments (it accepts symbols, chars and keywords too; TypeChecks'
+  AsMutableString is for primitives that MUTATE).
+
+* Primitive.Invoke carries a last-resort net: an InvalidCastException from
+  any primitive body -- including one a HOST registers through
+  DefinePrimitive -- is translated to wrong-type-arg named for the
+  primitive, unpositioned. A SchemeThrow from a nested primitive is not an
+  InvalidCastException and passes through with its own attribution.
+
+The contract is fenced by WrongTypeArgumentTests. When writing a new
+primitive, prefer the positioned accessor; the net is the backstop, not the
+convention.
+
 INSTALLATION
 ------------
 NuGet package: CodeBrix.LilyScheme.LgplLicenseForever
@@ -1169,6 +1195,14 @@ The suite's classes, by what each one fences:
                             symbol and type form, the compound object model,
                             print-exception, and the loud wrong-type-arg
                             refusals
+    WrongTypeArgumentTests  the wrong-typed-argument contract from both
+                            layers: a Scheme catch on 'wrong-type-arg sees
+                            a primitive's type failure, the positioned
+                            subr/position message, the Primitive.Invoke net
+                            translating a bare cast (including one in a
+                            HOST-registered primitive), the net's
+                            selectivity (a primitive's own SchemeThrow
+                            passes untouched), and the well-typed controls
     RecordInheritanceTests  Guile's single-inheritance record model: parent
                             fields laid out first, subtype-accepting
                             predicates, the "parent type is final" refusal,

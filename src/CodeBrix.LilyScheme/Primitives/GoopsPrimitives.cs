@@ -403,7 +403,7 @@ public static class GoopsPrimitives
         // else. This is what lets several define-methods with the same name accumulate.
         interpreter.DefinePrimitive("%ensure-generic!", 1, 1, a =>
         {
-            Symbol name = (Symbol)a[0];
+            Symbol name = TypeChecks.AsSymbol(a[0], "%ensure-generic!", 1);
             Variable existing = interpreter.CurrentModule.Lookup(name);
             object current = existing != null && existing.IsBound ? existing.GetValue() : null;
             if (current is GenericFunction found)

@@ -401,7 +401,9 @@ public static class GuileCorePrimitives
         {
             for (int i = 0; i + 1 < a.Length; i++)
             {
-                if (string.CompareOrdinal(((Symbol)a[i]).Name, ((Symbol)a[i + 1]).Name) >= 0)
+                if (string.CompareOrdinal(
+                        TypeChecks.AsSymbol(a[i], "symbol<?", i + 1).Name,
+                        TypeChecks.AsSymbol(a[i + 1], "symbol<?", i + 2).Name) >= 0)
                 {
                     return false;
                 }
@@ -433,8 +435,10 @@ public static class GuileCorePrimitives
         {
             for (int i = 0; i + 1 < a.Length; i++)
             {
-                int left = char.ToUpperInvariant((char)((SchemeChar)a[i]).CodePoint);
-                int right = char.ToUpperInvariant((char)((SchemeChar)a[i + 1]).CodePoint);
+                int left = char.ToUpperInvariant(
+                    (char)TypeChecks.AsChar(a[i], name, i + 1).CodePoint);
+                int right = char.ToUpperInvariant(
+                    (char)TypeChecks.AsChar(a[i + 1], name, i + 2).CodePoint);
                 if (!accept(left.CompareTo(right)))
                 {
                     return false;

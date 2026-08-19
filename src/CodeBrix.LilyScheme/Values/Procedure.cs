@@ -185,7 +185,35 @@ public sealed class Primitive : Procedure
     /// <summary>Invokes the primitive.</summary>
     /// <param name="arguments">The evaluated arguments.</param>
     /// <returns>The result value.</returns>
-    public object Invoke(object[] arguments) => _implementation(arguments);
+    public object Invoke(object[] arguments)
+    {
+        //was previously: => _implementation(arguments);
+        // A bare cast inside a primitive's body is that primitive's argument type
+        // check failing the .NET way. Guile raises a catchable `wrong-type-arg' for
+        // the same mistake (libguile's scm_wrong_type_arg), and Scheme code
+        // legitimately catches that key — so the raw InvalidCastException must not
+        // escape to the host, where no `catch' can see it. Primitives with checked
+        // accessors (Primitives.TypeChecks, StringPrimitives.Text) raise the
+        // POSITIONED error themselves and never reach this net; this is the
+        // last-resort translation for any site still casting bare, at the one place
+        // every primitive passes through. A SchemeThrow from a NESTED primitive is
+        // not an InvalidCastException and passes through untouched, keeping the
+        // inner primitive's own attribution.
+        try
+        {
+            return _implementation(arguments);
+        }
+        catch (InvalidCastException)
+        {
+            throw new Runtime.SchemeThrow(
+                Symbol.Intern("wrong-type-arg"),
+                Pair.List(
+                    new MutableString(Name ?? "primitive"),
+                    new MutableString("Wrong type argument"),
+                    Nil.Instance,
+                    false));
+        }
+    }
 
     /// <summary>Returns the external representation.</summary>
     /// <returns>A description including the primitive name.</returns>

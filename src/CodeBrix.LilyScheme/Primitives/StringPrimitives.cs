@@ -39,7 +39,8 @@ public static class StringPrimitives
         interpreter.DefinePrimitive("string-ref", 2, 2, a => SchemeChar.Get(Text(a[0], "string-ref")[Index(a[1])]));
         interpreter.DefinePrimitive("string-set!", 3, 3, a =>
         {
-            ((MutableString)a[0])[Index(a[1])] = (char)((SchemeChar)a[2]).CodePoint;
+            TypeChecks.AsMutableString(a[0], "string-set!", 1)[Index(a[1])]
+                = (char)TypeChecks.AsChar(a[2], "string-set!", 3).CodePoint;
             return Unspecified.Instance;
         });
 
@@ -73,7 +74,9 @@ public static class StringPrimitives
         interpreter.DefinePrimitive("make-string", 1, 2, a =>
         {
             int length = Index(a[0]);
-            char fill = a.Length > 1 ? (char)((SchemeChar)a[1]).CodePoint : ' ';
+            char fill = a.Length > 1
+                ? (char)TypeChecks.AsChar(a[1], "make-string", 2).CodePoint
+                : ' ';
             return new MutableString(length, fill);
         });
 
@@ -281,7 +284,8 @@ public static class StringPrimitives
 
     private static void InstallSymbols(Interpreter interpreter)
     {
-        interpreter.DefinePrimitive("symbol->string", 1, 1, a => new MutableString(((Symbol)a[0]).Name));
+        interpreter.DefinePrimitive("symbol->string", 1, 1,
+            a => new MutableString(TypeChecks.AsSymbol(a[0], "symbol->string", 1).Name));
         interpreter.DefinePrimitive("string->symbol", 1, 1, a => Symbol.Intern(Text(a[0], "string->symbol")));
         interpreter.DefinePrimitive("string->uninterned-symbol", 1, 1, a => Symbol.Generate(Text(a[0], "string->uninterned-symbol")));
 
@@ -301,9 +305,12 @@ public static class StringPrimitives
         interpreter.DefinePrimitive("gensym", 0, 1, a =>
             Symbol.Generate(a.Length > 0 ? Text(a[0], "gensym") : " g"));
 
-        interpreter.DefinePrimitive("symbol->keyword", 1, 1, a => Keyword.Get((Symbol)a[0]));
-        interpreter.DefinePrimitive("keyword->symbol", 1, 1, a => ((Keyword)a[0]).Name);
-        interpreter.DefinePrimitive("symbol-interned?", 1, 1, a => !((Symbol)a[0]).IsUninterned);
+        interpreter.DefinePrimitive("symbol->keyword", 1, 1,
+            a => Keyword.Get(TypeChecks.AsSymbol(a[0], "symbol->keyword", 1)));
+        interpreter.DefinePrimitive("keyword->symbol", 1, 1,
+            a => TypeChecks.AsKeyword(a[0], "keyword->symbol", 1).Name);
+        interpreter.DefinePrimitive("symbol-interned?", 1, 1,
+            a => !TypeChecks.AsSymbol(a[0], "symbol-interned?", 1).IsUninterned);
 
         interpreter.DefinePrimitive("symbol", 0, -1, a =>
         {
@@ -319,12 +326,15 @@ public static class StringPrimitives
 
     private static void InstallCharacters(Interpreter interpreter)
     {
-        interpreter.DefinePrimitive("char->integer", 1, 1, a => (long)((SchemeChar)a[0]).CodePoint);
+        interpreter.DefinePrimitive("char->integer", 1, 1,
+            a => (long)TypeChecks.AsChar(a[0], "char->integer", 1).CodePoint);
         interpreter.DefinePrimitive("integer->char", 1, 1, a => SchemeChar.Get(Index(a[0])));
         interpreter.DefinePrimitive("char-upcase", 1, 1, a =>
-            SchemeChar.Get(char.ToUpperInvariant((char)((SchemeChar)a[0]).CodePoint)));
+            SchemeChar.Get(char.ToUpperInvariant(
+                (char)TypeChecks.AsChar(a[0], "char-upcase", 1).CodePoint)));
         interpreter.DefinePrimitive("char-downcase", 1, 1, a =>
-            SchemeChar.Get(char.ToLowerInvariant((char)((SchemeChar)a[0]).CodePoint)));
+            SchemeChar.Get(char.ToLowerInvariant(
+                (char)TypeChecks.AsChar(a[0], "char-downcase", 1).CodePoint)));
 
         DefineCharComparison(interpreter, "char=?", (x, y) => x == y);
         DefineCharComparison(interpreter, "char<?", (x, y) => x < y);
@@ -332,11 +342,16 @@ public static class StringPrimitives
         DefineCharComparison(interpreter, "char<=?", (x, y) => x <= y);
         DefineCharComparison(interpreter, "char>=?", (x, y) => x >= y);
 
-        interpreter.DefinePrimitive("char-alphabetic?", 1, 1, a => char.IsLetter((char)((SchemeChar)a[0]).CodePoint));
-        interpreter.DefinePrimitive("char-numeric?", 1, 1, a => char.IsDigit((char)((SchemeChar)a[0]).CodePoint));
-        interpreter.DefinePrimitive("char-whitespace?", 1, 1, a => char.IsWhiteSpace((char)((SchemeChar)a[0]).CodePoint));
-        interpreter.DefinePrimitive("char-upper-case?", 1, 1, a => char.IsUpper((char)((SchemeChar)a[0]).CodePoint));
-        interpreter.DefinePrimitive("char-lower-case?", 1, 1, a => char.IsLower((char)((SchemeChar)a[0]).CodePoint));
+        interpreter.DefinePrimitive("char-alphabetic?", 1, 1,
+            a => char.IsLetter((char)TypeChecks.AsChar(a[0], "char-alphabetic?", 1).CodePoint));
+        interpreter.DefinePrimitive("char-numeric?", 1, 1,
+            a => char.IsDigit((char)TypeChecks.AsChar(a[0], "char-numeric?", 1).CodePoint));
+        interpreter.DefinePrimitive("char-whitespace?", 1, 1,
+            a => char.IsWhiteSpace((char)TypeChecks.AsChar(a[0], "char-whitespace?", 1).CodePoint));
+        interpreter.DefinePrimitive("char-upper-case?", 1, 1,
+            a => char.IsUpper((char)TypeChecks.AsChar(a[0], "char-upper-case?", 1).CodePoint));
+        interpreter.DefinePrimitive("char-lower-case?", 1, 1,
+            a => char.IsLower((char)TypeChecks.AsChar(a[0], "char-lower-case?", 1).CodePoint));
     }
 
     private static void DefineCharComparison(Interpreter interpreter, string name, Func<int, int, bool> comparison)
@@ -345,7 +360,9 @@ public static class StringPrimitives
         {
             for (int i = 0; i + 1 < a.Length; i++)
             {
-                if (!comparison(((SchemeChar)a[i]).CodePoint, ((SchemeChar)a[i + 1]).CodePoint))
+                if (!comparison(
+                    TypeChecks.AsChar(a[i], name, i + 1).CodePoint,
+                    TypeChecks.AsChar(a[i + 1], name, i + 2).CodePoint))
                 {
                     return false;
                 }

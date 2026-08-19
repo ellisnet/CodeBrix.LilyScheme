@@ -275,7 +275,7 @@ public static class PortPrimitives
 
         interpreter.DefinePrimitive("write-char", 1, 2, a =>
         {
-            Writer(interpreter, a, 1).Write(((SchemeChar)a[0]).ToString());
+            Writer(interpreter, a, 1).Write(TypeChecks.AsChar(a[0], "write-char", 1).ToString());
             return Unspecified.Instance;
         });
 
@@ -596,7 +596,7 @@ public static class PortPrimitives
             SchemeInputPort port = a.Length > 1
                 ? InputPort(a[1], "unread-char")
                 : currentInputPort();
-            char c = (char)((SchemeChar)a[0]).CodePoint;
+            char c = (char)TypeChecks.AsChar(a[0], "unread-char", 1).CodePoint;
             port.PushbackCharacter(c);
             return a[0];
         });
