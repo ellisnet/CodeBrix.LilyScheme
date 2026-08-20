@@ -66,6 +66,50 @@ public class SchemeReaderTests
         => ((Symbol)ReadOne("...")).Name.Should().Be("...");
 
     [Fact]
+    public void quote_family_characters_are_constituents_inside_a_token()
+    {
+        //Arrange
+        // Guile's reader treats ', ` and , as syntax only at DATUM START; once a token
+        // is in progress they are ordinary symbol characters -- measured against the
+        // pinned oracle: Hello', a'b, a`b, a,b and x'' are each ONE symbol, and 1' is
+        // a symbol because its number parse fails. The apostrophe used to terminate
+        // the token here, which read Hello' as a symbol plus a dangling quote and
+        // died on "unexpected end of input".
+
+        //Act & Assert
+        ((Symbol)ReadOne("Hello'")).Name.Should().Be("Hello'");
+        ((Symbol)ReadOne("a'b")).Name.Should().Be("a'b");
+        ((Symbol)ReadOne("a`b")).Name.Should().Be("a`b");
+        ((Symbol)ReadOne("a,b")).Name.Should().Be("a,b");
+        ((Symbol)ReadOne("x''")).Name.Should().Be("x''");
+        ((Symbol)ReadOne("1'")).Name.Should().Be("1'");
+        Printer.Write(ReadOne("(a . b')")).Should().Be("(a . b')");
+    }
+
+    [Fact]
+    public void quote_family_characters_still_read_as_syntax_at_datum_start()
+    {
+        //Arrange
+        // The CONTROLS for the constituent rule above: at datum start -- after
+        // whitespace, an opening paren, or another quote -- the same characters are
+        // quote, quasiquote and unquote, and a hash literal ends before an adjacent
+        // apostrophe (Guile reads #t by all-or-nothing character match, never by
+        // token, so #t' is #t with the quote left for the NEXT datum).
+
+        //Act & Assert
+        Printer.Write(ReadOne("'Hello'")).Should().Be("(quote Hello')");
+        Printer.Write(ReadOne("'a'b")).Should().Be("(quote a'b)");
+        Printer.Write(ReadOne("(a 'b)")).Should().Be("(a (quote b))");
+        Printer.Write(ReadOne("''x")).Should().Be("(quote (quote x))");
+        Printer.Write(ReadOne("`(1 ,x)")).Should().Be("(quasiquote (1 (unquote x)))");
+
+        List<object> forms = SchemeReader.ReadAll("#t'x", "<test>");
+        forms.Count.Should().Be(2);
+        forms[0].Should().Be(true);
+        Printer.Write(forms[1]).Should().Be("(quote x)");
+    }
+
+    [Fact]
     public void reads_a_string_with_escapes()
         => ReadOne("\"a\\nb\"").ToString().Should().Be("a\nb");
 

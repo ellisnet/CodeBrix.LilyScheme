@@ -7,6 +7,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using CodeBrix.LilyScheme.Numeric;
 using CodeBrix.LilyScheme.Runtime;
 using CodeBrix.LilyScheme.Values;
@@ -129,15 +130,31 @@ public static class CorePrimitives
         });
         interpreter.DefinePrimitive("list-tail", 2, 2, a => ListTail(a[0], ToInt(a[1])));
         interpreter.DefinePrimitive("list-head", 2, 2, a => ListHead(a[0], ToInt(a[1])));
-        interpreter.DefinePrimitive("list-ref", 2, 2, a => AsPair(ListTail(a[0], ToInt(a[1])), "list-ref").Car);
+
+        // libguile/list.c distinguishes HOW the walk to index K fails: running off the
+        // end of a PROPER list is out-of-range naming argument 2, while running into
+        // an improper tail is wrong-type-arg naming argument 1 -- and a Scheme catch
+        // on 'out-of-range stands on the difference. ListIndexPair carries both, with
+        // shapes measured against the pinned oracle.
+        interpreter.DefinePrimitive("list-ref", 2, 2, a => ListIndexPair(a[0], a[1], "list-ref").Car);
 
         // libguile/list.c's scm_list_set_x: set the kth car and ANSWER THE VALUE, not the
         // list. scm/translation-functions.scm's determine-frets relies on the mutation,
         // and optargs.scm on the return, so neither half is decorative.
         interpreter.DefinePrimitive("list-set!", 3, 3, a =>
         {
-            Pair cell = AsPair(ListTail(a[0], ToInt(a[1])), "list-set!");
-            cell.Car = a[2];
+            ListIndexPair(a[0], a[1], "list-set!").Car = a[2];
+            return a[2];
+        });
+
+        // libguile/list.c's scm_list_cdr_set_x: set the kth pair's CDR, splicing a new
+        // tail into the list, and answer the value like list-set! does (measured:
+        // (list-cdr-set! (list 1 2 3) 1 (list 4 5 6)) answers (4 5 6) and leaves
+        // (1 2 4 5 6)). The manual's lists chapter teaches it as THE way to replace a
+        // list's tail in place.
+        interpreter.DefinePrimitive("list-cdr-set!", 3, 3, a =>
+        {
+            ListIndexPair(a[0], a[1], "list-cdr-set!").Cdr = a[2];
             return a[2];
         });
         interpreter.DefinePrimitive("last-pair", 1, 1, a => LastPair(a[0]));
@@ -494,6 +511,16 @@ public static class CorePrimitives
         return result;
     }
 
+    /// <summary>
+    /// <c>append</c> — the copying concatenation. Every argument BEFORE the last must
+    /// be a proper list; libguile validates them left to right and raises
+    /// <c>wrong-type-arg</c> naming the argument's position, the words "empty list",
+    /// and the offending TAIL, so an improper or non-list argument is LOUD. The last
+    /// argument is attached as it stands and never walked — <c>(append '(1 2) x)</c>
+    /// puts <c>x</c> itself in cdr position, whatever it is.
+    /// </summary>
+    /// <param name="arguments">The lists to concatenate.</param>
+    /// <returns>The concatenation.</returns>
     private static object Append(object[] arguments)
     {
         if (arguments.Length == 0)
@@ -501,10 +528,18 @@ public static class CorePrimitives
             return Nil.Instance;
         }
 
-        object result = arguments[arguments.Length - 1];
-        for (int i = arguments.Length - 2; i >= 0; i--)
+        // Validate left to right BEFORE building, so a call with two bad arguments
+        // reports the leftmost one, as the oracle does.
+        List<object>[] lists = new List<object>[arguments.Length - 1];
+        for (int i = 0; i < arguments.Length - 1; i++)
         {
-            List<object> items = Pair.ToList(arguments[i]);
+            lists[i] = ProperListItems(arguments[i], "append", i + 1);
+        }
+
+        object result = arguments[arguments.Length - 1];
+        for (int i = lists.Length - 1; i >= 0; i--)
+        {
+            List<object> items = lists[i];
             for (int j = items.Count - 1; j >= 0; j--)
             {
                 result = new Pair(items[j], result);
@@ -512,6 +547,28 @@ public static class CorePrimitives
         }
 
         return result;
+    }
+
+    // Reads one of append's non-last arguments the way libguile walks it: the final
+    // cdr must be the empty list, and anything else -- an improper tail, or a
+    // non-list argument (which is its own tail) -- raises the measured
+    // "expecting empty list" wrong-type-arg naming the argument's position.
+    private static List<object> ProperListItems(object list, string procedureName, int position)
+    {
+        List<object> items = new List<object>();
+        object cursor = list;
+        while (cursor is Pair pair)
+        {
+            items.Add(pair.Car);
+            cursor = pair.Cdr;
+        }
+
+        if (!(cursor is Nil || cursor is ElispNil))
+        {
+            throw ExpectingError(procedureName, position, "empty list", cursor);
+        }
+
+        return items;
     }
 
     /// <summary>
@@ -529,7 +586,11 @@ public static class CorePrimitives
     /// </para>
     /// <para>
     /// As in Guile the LAST argument is attached as it stands: it is never walked and
-    /// need not be a list.
+    /// need not be a list. Every EARLIER argument must be the empty list (skipped) or
+    /// a proper list: a non-pair raises the measured "expecting pair" wrong-type-arg
+    /// and an improper tail the "expecting empty list" one, each naming the
+    /// argument's position. The re-linking is progressive, as libguile's is, so an
+    /// argument validated as a pair is attached BEFORE its tail is walked.
     /// </para>
     /// </summary>
     /// <param name="arguments">The lists to concatenate.</param>
@@ -546,11 +607,16 @@ public static class CorePrimitives
 
         for (int i = 0; i < arguments.Length - 1; i++)
         {
-            if (!(arguments[i] is Pair first))
+            object argument = arguments[i];
+            if (argument is Nil || argument is ElispNil)
             {
-                // An empty (or improper) argument contributes nothing, exactly as the
-                // copying append reads it through Pair.ToList.
+                // An empty argument contributes nothing.
                 continue;
+            }
+
+            if (!(argument is Pair first))
+            {
+                throw ExpectingError("append!", i + 1, "pair", argument);
             }
 
             if (tail == null)
@@ -566,6 +632,11 @@ public static class CorePrimitives
             while (last.Cdr is Pair next)
             {
                 last = next;
+            }
+
+            if (!(last.Cdr is Nil || last.Cdr is ElispNil))
+            {
+                throw ExpectingError("append!", i + 1, "empty list", last.Cdr);
             }
 
             tail = last;
@@ -629,6 +700,85 @@ public static class CorePrimitives
 
         return cursor;
     }
+
+    // libguile/list.c's index walk, shared by list-ref, list-set! and list-cdr-set!:
+    // answer the pair at index K, or fail the way the oracle fails -- running off a
+    // PROPER list is out-of-range naming argument 2, hitting an improper tail is
+    // wrong-type-arg naming argument 1 and quoting the LIST, and a negative index
+    // never reaches the walk at all (see NegativeIndexError).
+    private static Pair ListIndexPair(object list, object index, string procedureName)
+    {
+        BigInteger k = SchemeNumber.ToBigInteger(index);
+        if (k < 0)
+        {
+            throw NegativeIndexError(index);
+        }
+
+        object cursor = list;
+        while (cursor is Pair pair)
+        {
+            if (k == 0)
+            {
+                return pair;
+            }
+
+            k -= 1;
+            cursor = pair.Cdr;
+        }
+
+        if (cursor is Nil || cursor is ElispNil)
+        {
+            throw ArgumentOutOfRange(procedureName, 2, index);
+        }
+
+        throw WrongTypePositioned(procedureName, 1, list);
+    }
+
+    // The list family's error shapes, measured against the pinned oracle (LilyPond
+    // 2.27.2, Guile 3.0) rather than recalled: the message keeps libguile's ~A/~S
+    // placeholders, the args list fills them, and the DATA slot carries the
+    // offending value in a one-element list. Older throws elsewhere in this
+    // interpreter bake the position into the message text with #f data; these four
+    // match the oracle exactly because reproducing its shapes is the point.
+    private static SchemeThrow ExpectingError(string procedureName, int position, string expecting, object value)
+        => new SchemeThrow(
+            Symbol.Intern("wrong-type-arg"),
+            Pair.List(
+                new MutableString(procedureName),
+                new MutableString("Wrong type argument in position ~A (expecting ~A): ~S"),
+                Pair.List((long)position, new MutableString(expecting), value),
+                Pair.List(value)));
+
+    private static SchemeThrow WrongTypePositioned(string procedureName, int position, object value)
+        => new SchemeThrow(
+            Symbol.Intern("wrong-type-arg"),
+            Pair.List(
+                new MutableString(procedureName),
+                new MutableString("Wrong type argument in position ~A: ~S"),
+                Pair.List((long)position, value),
+                Pair.List(value)));
+
+    private static SchemeThrow ArgumentOutOfRange(string procedureName, int position, object value)
+        => new SchemeThrow(
+            Symbol.Intern("out-of-range"),
+            Pair.List(
+                new MutableString(procedureName),
+                new MutableString("Argument ~A out of range: ~S"),
+                Pair.List((long)position, value),
+                Pair.List(value)));
+
+    // A negative index dies inside libguile's scm_to_size_t CONVERSION, before the
+    // procedure's name enters the story: subr #f, and the range spelled out as
+    // 0 to< SIZE_MAX. Measured verbatim from the oracle --
+    // (out-of-range #f "Value out of range ~S to< ~S: ~S" (0 18446744073709551615 -1) (-1)).
+    private static SchemeThrow NegativeIndexError(object value)
+        => new SchemeThrow(
+            Symbol.Intern("out-of-range"),
+            Pair.List(
+                false,
+                new MutableString("Value out of range ~S to< ~S: ~S"),
+                Pair.List(0L, (BigInteger)ulong.MaxValue, value),
+                Pair.List(value)));
 
     /// <summary>
     /// Applies an equality predicate the way Guile's n-ary <c>eq?</c>, <c>eqv?</c> and

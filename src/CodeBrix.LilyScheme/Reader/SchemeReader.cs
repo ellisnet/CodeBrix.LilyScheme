@@ -862,8 +862,14 @@ public sealed class SchemeReader
 
     private string ReadToken()
     {
+        // Quote, quasiquote and unquote are syntax only at DATUM START (the dispatch
+        // in ReadDatumAtPosition); inside a token already in progress they are
+        // ordinary constituent characters, exactly as Guile reads them -- measured
+        // against the pinned oracle: a'b, a`b, a,b and Hello' are each ONE symbol,
+        // and 1' is a symbol too (its number parse fails). An apostrophe used to be
+        // excluded here, which split Hello' into a symbol and a dangling quote.
         StringBuilder builder = new StringBuilder();
-        while (!AtEnd && !IsDelimiter(Peek()) && Peek() != '\'')
+        while (!AtEnd && !IsDelimiter(Peek()))
         {
             builder.Append(Advance());
         }

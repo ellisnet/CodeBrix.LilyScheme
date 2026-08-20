@@ -115,4 +115,49 @@ public class DestructiveAppendTests
         //Assert
         result.Should().Be("42");
     }
+
+    [Fact]
+    public void append_rejects_an_improper_or_non_list_argument_before_the_last()
+    {
+        //Arrange
+        // Only the LAST argument is attached as it stands; every earlier one must be a
+        // proper list, and libguile is LOUD about it -- the measured shape names the
+        // argument's position and quotes the offending TAIL. Both appends once walked
+        // whatever they were given and silently dropped the improper tail, which is
+        // how (append lst2 6) over (1 2 3 4 . 5) answered (1 2 3 4 . 6) with no
+        // diagnostic.
+
+        //Act & Assert
+        Eval("(catch #t (lambda () (append '(1 2 3 4 . 5) 6)) (lambda (k . a) (cons k a)))")
+            .Should().Be("(wrong-type-arg \"append\" \"Wrong type argument in position ~A (expecting ~A): ~S\" (1 \"empty list\" 5) (5))");
+        Eval("(catch #t (lambda () (append 5 6)) (lambda (k . a) (cons k a)))")
+            .Should().Be("(wrong-type-arg \"append\" \"Wrong type argument in position ~A (expecting ~A): ~S\" (1 \"empty list\" 5) (5))");
+
+        // The position names the argument, and validation runs LEFT to right.
+        Eval("(catch #t (lambda () (append '(1 2) '(3 . 4) '(5))) (lambda (k . a) (cons k a)))")
+            .Should().Be("(wrong-type-arg \"append\" \"Wrong type argument in position ~A (expecting ~A): ~S\" (2 \"empty list\" 4) (4))");
+
+        // The CONTROLS: the last argument stays free-form, empties contribute nothing,
+        // and a single argument -- improper included -- is answered as it stands.
+        Eval("(append '(1 2 3) 4)").Should().Be("(1 2 3 . 4)");
+        Eval("(append '() '(1))").Should().Be("(1)");
+        Eval("(append '(1 . 2))").Should().Be("(1 . 2)");
+        Eval("(append)").Should().Be("()");
+    }
+
+    [Fact]
+    public void append_bang_rejects_bad_arguments_with_its_own_measured_shapes()
+    {
+        //Arrange
+        // append! distinguishes the two failures where append does not: a NON-PAIR
+        // argument before the last expects "pair", an improper tail expects
+        // "empty list" -- both measured against the pinned oracle. It used to skip a
+        // non-pair argument silently and OVERWRITE an improper tail.
+
+        //Act & Assert
+        Eval("(catch #t (lambda () (append! (list 1 2 3 4) 5 (list 6))) (lambda (k . a) (cons k a)))")
+            .Should().Be("(wrong-type-arg \"append!\" \"Wrong type argument in position ~A (expecting ~A): ~S\" (2 \"pair\" 5) (5))");
+        Eval("(catch #t (lambda () (append! (cons 1 2) (list 3))) (lambda (k . a) (cons k a)))")
+            .Should().Be("(wrong-type-arg \"append!\" \"Wrong type argument in position ~A (expecting ~A): ~S\" (1 \"empty list\" 2) (2))");
+    }
 }

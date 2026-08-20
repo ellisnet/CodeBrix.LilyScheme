@@ -180,9 +180,12 @@ ARCHITECTURE
     Numeric/      the numeric tower: fixnum, bignum, Ratio, real
     Reader/       SchemeReader and SourceProperties -- Guile dialect, including #:keywords,
                   #{extended symbols}#, #nil, block and datum comments,
-                  array literals (#1@1(...), #2((...) (...))), and Guile's
+                  array literals (#1@1(...), #2((...) (...))), Guile's
                   fixed-width \uXXXX / \UXXXXXX string escapes (exactly four
-                  and six hex digits, libguile/read.c's SCM_READ_HEX_ESCAPE)
+                  and six hex digits, libguile/read.c's SCM_READ_HEX_ESCAPE),
+                  and ' ` , as SYMBOL CONSTITUENTS once a token is in
+                  progress (Hello' is one symbol; quote syntax lives at
+                  datum start only -- measured against the pinned oracle)
     Runtime/      Evaluator, SchemeModule, LexicalEnvironment, Printer,
                   SchemeBootstrap
     TreeIl/       TreeIlEvaluator, TreeIlClosure
@@ -949,6 +952,21 @@ variable-names and every (append! (ly:music-property m 'elements) ...) in
 music-functions-init.ly. The LAST argument is attached as it stands: never
 walked, and not required to be a list.
 
+Every argument BEFORE the last must be a proper list, in BOTH appends, and
+the failure is libguile's own (measured against the pinned oracle): append
+raises wrong-type-arg naming the argument's position, the words "empty
+list", and the offending TAIL; append! distinguishes a non-pair argument
+("pair") from an improper tail ("empty list"). Both once walked whatever
+they were given -- (append '(1 2 3 4 . 5) 6) answered (1 2 3 4 . 6),
+silently dropping the tail, and append! skipped a non-list argument
+entirely. The same oracle pass gave the index-walking family its measured
+failures: list-ref / list-set! / list-cdr-set! (which splices a kth CDR and
+answers the VALUE) raise out-of-range naming argument 2 when they run off a
+proper list, wrong-type-arg naming argument 1 on an improper tail, and a
+NEGATIVE index dies inside the size_t conversion -- subr #f -- before the
+procedure's name enters the story. A catch on 'out-of-range stands on the
+distinction, and list-ref used to answer it with a wrong-type-arg instead.
+
 WHY case BINDS ITS KEY ONCE
 ---------------------------
 The prelude's case macro rebinds a compound key expression in a let before
@@ -1082,7 +1100,10 @@ The suite's classes, by what each one fences:
 
     SchemeReaderTests       reader coverage: numbers, the numeric
                             tower, strings, characters, keywords,
-                            vectors, #{...}#, #nil, comments, and the
+                            vectors, #{...}#, #nil, comments, the
+                            quote family as mid-token symbol
+                            constituents (Hello' is ONE symbol) with
+                            datum-start quoting as the control, and the
                             Printer.WriteString round trip that a host
                             path depends on -- Windows and POSIX shapes,
                             including the paths whose next character
@@ -1187,6 +1208,9 @@ The suite's classes, by what each one fences:
                             match -- as libguile/alist.c documents
     DestructiveAppendTests  append! re-linking its arguments rather than
                             copying them (the identity IS the contract),
+                            both appends rejecting an improper or
+                            non-list argument before the last with the
+                            oracle-measured wrong-type-arg shapes,
                             plus eval-string
     HostEqualityTests       equal? dispatching to a host object's own
                             equality handler, the way scm_equal_p ends at
@@ -1194,8 +1218,13 @@ The suite's classes, by what each one fences:
     NaryEqualityTests       eq? / eqv? / equal? as N-ARY predicates, and
                             the optional equality predicate of member and
                             assoc
-    ListMutationTests       list-set!, to libguile/list.c's documented
-                            behaviour
+    ListMutationTests       list-set! and list-cdr-set!, to libguile/list.c's
+                            behaviour (both answer the VALUE), plus the
+                            index walk's oracle-measured failures: off a
+                            proper list is out-of-range naming argument 2,
+                            an improper tail is wrong-type-arg naming
+                            argument 1, and a negative index dies in the
+                            size_t conversion with subr #f
     ComplexNumberTests      the complex literals, arithmetic and accessors
                             described above, including the exact-zero
                             collapse
@@ -1288,6 +1317,22 @@ The suite's classes, by what each one fences:
                             on every member, and a wrong-typed criterion
                             raising the positioned wrong-type-arg even
                             over an empty window
+    LilyPondSchemeManualTests  the pure-Scheme REPL transcripts of the
+                            "LilyPond's Scheme" manual (Urs Liska and
+                            others, CC BY-SA 4.0,
+                            github.com/jeanas/lilyponds-scheme), replayed
+                            as define-then-use sessions -- the user's-eye
+                            contract: reader dot edge cases ('(apple .2),
+                            '(red. 4)), accessor shorthand composition,
+                            append attaching its LAST argument as it
+                            stands, acons/assq first-match answers,
+                            quasiquote splicing, map stopping at the
+                            shortest list, srfi-1 accessors via
+                            use-modules, printed procedure signatures,
+                            and the manual's deliberate failures raising
+                            the same throw KEYS. LilyPond-layer names
+                            (red, color?, fraction?, ly:*) are excluded
+                            on purpose -- those are the consumer's
     SmokeTests              the library assembly loads at all, and every
                             vendored .scm resource arrives WITHOUT
                             carriage returns -- the sweep that stops a
