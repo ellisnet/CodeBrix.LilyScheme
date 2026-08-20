@@ -103,14 +103,16 @@ public static class GuileCorePrimitives
 
     private static void InstallStrings(Interpreter interpreter)
     {
-        interpreter.DefinePrimitive("string-tokenize", 1, 2, a =>
+        interpreter.DefinePrimitive("string-tokenize", 1, 4, a =>
         {
             string text = StringPrimitives.Text(a[0], "string-tokenize");
             CharSet set = a.Length > 1 ? AsCharSet(a[1], "string-tokenize") : CharSet.Graphic;
+            StringPrimitives.SubstringSpec(a, 2, text.Length, "string-tokenize", out int start, out int end);
             List<object> tokens = new List<object>();
             StringBuilder current = new StringBuilder();
-            foreach (char c in text)
+            for (int i = start; i < end; i++)
             {
+                char c = text[i];
                 if (set.Contains(c))
                 {
                     current.Append(c);
@@ -133,6 +135,7 @@ public static class GuileCorePrimitives
         interpreter.DefinePrimitive("string-split", 2, 2, a =>
         {
             string text = StringPrimitives.Text(a[0], "string-split");
+            CheckCriterion(a[1], "string-split", 2);
             List<object> parts = new List<object>();
             StringBuilder current = new StringBuilder();
             foreach (char c in text)
@@ -152,19 +155,44 @@ public static class GuileCorePrimitives
             return Pair.ListFrom(parts);
         });
 
-        interpreter.DefinePrimitive("string-trim", 1, 2, a =>
-            new MutableString(TrimEnds(StringPrimitives.Text(a[0], "string-trim"), a, interpreter, true, false)));
+        interpreter.DefinePrimitive("string-trim", 1, 4, a =>
+            new MutableString(TrimEnds(StringPrimitives.Text(a[0], "string-trim"), a, interpreter, "string-trim", true, false)));
 
-        interpreter.DefinePrimitive("string-trim-right", 1, 2, a =>
-            new MutableString(TrimEnds(StringPrimitives.Text(a[0], "string-trim-right"), a, interpreter, false, true)));
+        interpreter.DefinePrimitive("string-trim-right", 1, 4, a =>
+            new MutableString(TrimEnds(StringPrimitives.Text(a[0], "string-trim-right"), a, interpreter, "string-trim-right", false, true)));
 
-        interpreter.DefinePrimitive("string-trim-both", 1, 2, a =>
-            new MutableString(TrimEnds(StringPrimitives.Text(a[0], "string-trim-both"), a, interpreter, true, true)));
+        interpreter.DefinePrimitive("string-trim-both", 1, 4, a =>
+            new MutableString(TrimEnds(StringPrimitives.Text(a[0], "string-trim-both"), a, interpreter, "string-trim-both", true, true)));
+
+        // SRFI-13's string-index and string-rindex (libguile/srfi-13.c): the optional
+        // START and END restrict the search window, and a hit is an index into the
+        // WHOLE string, never into the window. LilyPond's font-table.ly splits a long
+        // glyph name at the dot nearest its middle by searching each half with exactly
+        // these ranged calls, so a range that is accepted and ignored moves the split
+        // with no diagnostic. The twins are defined side by side so they cannot drift
+        // to different assumptions again.
+        interpreter.DefinePrimitive("string-index", 2, 4, a =>
+        {
+            string text = StringPrimitives.Text(a[0], "string-index");
+            StringPrimitives.SubstringSpec(a, 2, text.Length, "string-index", out int start, out int end);
+            CheckCriterion(a[1], "string-index", 2);
+            for (int i = start; i < end; i++)
+            {
+                if (Matches(a[1], text[i], interpreter))
+                {
+                    return (long)i;
+                }
+            }
+
+            return false;
+        });
 
         interpreter.DefinePrimitive("string-rindex", 2, 4, a =>
         {
             string text = StringPrimitives.Text(a[0], "string-rindex");
-            for (int i = text.Length - 1; i >= 0; i--)
+            StringPrimitives.SubstringSpec(a, 2, text.Length, "string-rindex", out int start, out int end);
+            CheckCriterion(a[1], "string-rindex", 2);
+            for (int i = end - 1; i >= start; i--)
             {
                 if (Matches(a[1], text[i], interpreter))
                 {
@@ -178,10 +206,12 @@ public static class GuileCorePrimitives
         interpreter.DefinePrimitive("string-count", 2, 4, a =>
         {
             string text = StringPrimitives.Text(a[0], "string-count");
+            StringPrimitives.SubstringSpec(a, 2, text.Length, "string-count", out int start, out int end);
+            CheckCriterion(a[1], "string-count", 2);
             long count = 0;
-            foreach (char c in text)
+            for (int i = start; i < end; i++)
             {
-                if (Matches(a[1], c, interpreter))
+                if (Matches(a[1], text[i], interpreter))
                 {
                     count++;
                 }
@@ -190,29 +220,68 @@ public static class GuileCorePrimitives
             return count;
         });
 
-        interpreter.DefinePrimitive("string-any", 2, 2, a =>
+        // string-any and string-every take (char_pred s [start [end]]) -- criterion
+        // FIRST -- and a char or char-set criterion answers a plain boolean, while a
+        // PREDICATE answers the value of the last call made: the truthy hit itself for
+        // string-any, the final result (or #t over an empty window) for string-every.
+        // libguile's string-any-c-code / string-every-c-code return their `res'
+        // variable, and pretty-print's width arithmetic reads such answers as values.
+        interpreter.DefinePrimitive("string-any", 2, 4, a =>
         {
-            foreach (char c in StringPrimitives.Text(a[1], "string-any"))
+            string text = StringPrimitives.Text(a[1], "string-any");
+            StringPrimitives.SubstringSpec(a, 2, text.Length, "string-any", out int start, out int end);
+            CheckCriterion(a[0], "string-any", 1);
+            if (a[0] is SchemeChar || a[0] is CharSet)
             {
-                object result = interpreter.Evaluator.Apply(a[0], new object[] { SchemeChar.Get(c) });
+                for (int i = start; i < end; i++)
+                {
+                    if (Matches(a[0], text[i], interpreter))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            object result = false;
+            for (int i = start; i < end; i++)
+            {
+                result = interpreter.Evaluator.Apply(a[0], new object[] { SchemeChar.Get(text[i]) });
                 if (Evaluator.IsTrue(result))
                 {
-                    return result;
+                    break;
                 }
             }
 
-            return false;
+            return result;
         });
 
-        interpreter.DefinePrimitive("string-every", 2, 2, a =>
+        interpreter.DefinePrimitive("string-every", 2, 4, a =>
         {
-            object result = true;
-            foreach (char c in StringPrimitives.Text(a[1], "string-every"))
+            string text = StringPrimitives.Text(a[1], "string-every");
+            StringPrimitives.SubstringSpec(a, 2, text.Length, "string-every", out int start, out int end);
+            CheckCriterion(a[0], "string-every", 1);
+            if (a[0] is SchemeChar || a[0] is CharSet)
             {
-                result = interpreter.Evaluator.Apply(a[0], new object[] { SchemeChar.Get(c) });
+                for (int i = start; i < end; i++)
+                {
+                    if (!Matches(a[0], text[i], interpreter))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            object result = true;
+            for (int i = start; i < end; i++)
+            {
+                result = interpreter.Evaluator.Apply(a[0], new object[] { SchemeChar.Get(text[i]) });
                 if (!Evaluator.IsTrue(result))
                 {
-                    return false;
+                    break;
                 }
             }
 
@@ -237,24 +306,45 @@ public static class GuileCorePrimitives
             return new MutableString(text.Substring(0, text.Length - Count(a[1])));
         });
 
-        interpreter.DefinePrimitive("string-pad", 2, 5, a => Pad(a, true));
-        interpreter.DefinePrimitive("string-pad-right", 2, 5, a => Pad(a, false));
+        interpreter.DefinePrimitive("string-pad", 2, 5, a => Pad(a, "string-pad", onLeft: true));
+        interpreter.DefinePrimitive("string-pad-right", 2, 5, a => Pad(a, "string-pad-right", onLeft: false));
 
+        // Guile's string-reverse copies the WHOLE string and reverses the [start, end)
+        // region inside the copy (libguile/srfi-13.c) -- it does NOT answer just the
+        // reversed window, which is what SRFI-13's own reference implementation does.
+        // The oracle wins.
         interpreter.DefinePrimitive("string-reverse", 1, 3, a =>
         {
-            char[] characters = StringPrimitives.Text(a[0], "string-reverse").ToCharArray();
-            Array.Reverse(characters);
+            string text = StringPrimitives.Text(a[0], "string-reverse");
+            StringPrimitives.SubstringSpec(a, 1, text.Length, "string-reverse", out int start, out int end);
+            char[] characters = text.ToCharArray();
+            Array.Reverse(characters, start, end - start);
             return new MutableString(new string(characters));
         });
 
+        // string-titlecase transforms the [start, end) region of a whole-string copy,
+        // like string-reverse. Only letters change case -- libguile's string_titlecase_x
+        // guards on char-alphabetic?, so a non-letter is copied through untouched and
+        // ends the word.
         interpreter.DefinePrimitive("string-titlecase", 1, 3, a =>
         {
-            StringBuilder builder = new StringBuilder(StringPrimitives.Text(a[0], "string-titlecase"));
+            string text = StringPrimitives.Text(a[0], "string-titlecase");
+            StringPrimitives.SubstringSpec(a, 1, text.Length, "string-titlecase", out int start, out int end);
+            StringBuilder builder = new StringBuilder(text);
             bool startOfWord = true;
-            for (int i = 0; i < builder.Length; i++)
+            for (int i = start; i < end; i++)
             {
-                builder[i] = startOfWord ? char.ToUpperInvariant(builder[i]) : char.ToLowerInvariant(builder[i]);
-                startOfWord = !char.IsLetter(builder[i]);
+                if (char.IsLetter(builder[i]))
+                {
+                    builder[i] = startOfWord
+                        ? char.ToUpperInvariant(builder[i])
+                        : char.ToLowerInvariant(builder[i]);
+                    startOfWord = false;
+                }
+                else
+                {
+                    startOfWord = true;
+                }
             }
 
             return new MutableString(builder.ToString());
@@ -1519,8 +1609,26 @@ public static class GuileCorePrimitives
         return sets;
     }
 
+    // Guile validates CHAR_PRED once, BEFORE its search loop -- the SCM_ASSERT sits
+    // after the char and char-set branches, ahead of any iteration -- so even an
+    // EMPTY window rejects a wrong-typed criterion. Validating per character inside
+    // Matches would let that case pass silently; this runs once, at the top of each
+    // primitive, and raises the positioned wrong-type-arg Guile raises.
+    private static void CheckCriterion(object criterion, string procedureName, int position)
+    {
+        if (criterion is SchemeChar || criterion is CharSet
+            || criterion is Procedure || criterion is IApplicable)
+        {
+            return;
+        }
+
+        throw TypeChecks.WrongType(criterion, procedureName, position);
+    }
+
     // SRFI-13 accepts a character, a character set or a predicate wherever it says
-    // "char/char-set/pred"; every one of the three shows up in LilyPond's Scheme.
+    // "char/char-set/pred"; every one of the three shows up in LilyPond's Scheme. A
+    // predicate is anything procedure? accepts, which includes an embedder's
+    // IApplicable host objects.
     private static bool Matches(object criterion, char value, Interpreter interpreter)
     {
         switch (criterion)
@@ -1530,6 +1638,7 @@ public static class GuileCorePrimitives
             case CharSet set:
                 return set.Contains(value);
             case Procedure _:
+            case IApplicable _:
                 return Evaluator.IsTrue(
                     interpreter.Evaluator.Apply(criterion, new object[] { SchemeChar.Get(value) }));
             default:
@@ -1537,11 +1646,18 @@ public static class GuileCorePrimitives
         }
     }
 
-    private static string TrimEnds(string text, object[] arguments, Interpreter interpreter, bool left, bool right)
+    private static string TrimEnds(string text, object[] arguments, Interpreter interpreter, string name, bool left, bool right)
     {
+        // Guile's string-trim family takes (s [char_pred [start [end]]]) and answers
+        // the trimmed [start, end) REGION -- characters outside it are dropped even
+        // when nothing gets trimmed (scm_string_trim returns the region substring).
         object criterion = arguments.Length > 1 ? arguments[1] : CharSet.Whitespace;
-        int start = 0;
-        int end = text.Length;
+        StringPrimitives.SubstringSpec(arguments, 2, text.Length, name, out int start, out int end);
+        if (arguments.Length > 1)
+        {
+            CheckCriterion(arguments[1], name, 2);
+        }
+
         if (left)
         {
             while (start < end && Matches(criterion, text[start], interpreter))
@@ -1567,43 +1683,62 @@ public static class GuileCorePrimitives
         // Guile also accepts the string first for backward compatibility.
         object criterion = arguments[0];
         object subject = arguments[1];
+        int criterionPosition = 1;
         if (subject is Procedure || subject is CharSet || subject is SchemeChar)
         {
             object swap = criterion;
             criterion = subject;
             subject = swap;
+            criterionPosition = 2;
         }
 
+        string text = StringPrimitives.Text(subject, name);
+        StringPrimitives.SubstringSpec(arguments, 2, text.Length, name, out int start, out int end);
+        CheckCriterion(criterion, name, criterionPosition);
+
+        // The range selects the substring the filter runs over, and the answer is
+        // built from THAT alone -- characters outside it are dropped, not kept
+        // (libguile/srfi-13.c's scm_string_delete and scm_string_filter).
         StringBuilder builder = new StringBuilder();
-        foreach (char c in StringPrimitives.Text(subject, name))
+        for (int i = start; i < end; i++)
         {
-            if (Matches(criterion, c, interpreter) == keepMatches)
+            if (Matches(criterion, text[i], interpreter) == keepMatches)
             {
-                builder.Append(c);
+                builder.Append(text[i]);
             }
         }
 
         return new MutableString(builder.ToString());
     }
 
-    private static object Pad(object[] arguments, bool onLeft)
+    private static object Pad(object[] arguments, string name, bool onLeft)
     {
-        string text = StringPrimitives.Text(arguments[0], "string-pad");
+        string text = StringPrimitives.Text(arguments[0], name);
         int width = Count(arguments[1]);
-        char filler = arguments.Length > 2 && arguments[2] is SchemeChar character
-            ? (char)character.CodePoint
-            : ' ';
+        if (width < 0)
+        {
+            // Guile reads the length through scm_to_size_t, so a negative one raises
+            // the same catchable out-of-range a bad START or END does.
+            throw StringPrimitives.SubstringRangeError(arguments[1], name);
+        }
 
-        if (text.Length >= width)
+        char filler = arguments.Length > 2
+            ? (char)TypeChecks.AsChar(arguments[2], name, 3).CodePoint
+            : ' ';
+        StringPrimitives.SubstringSpec(arguments, 3, text.Length, name, out int start, out int end);
+
+        int length = end - start;
+        if (length >= width)
         {
             // SRFI-13 truncates from the side opposite the padding.
             return new MutableString(onLeft
-                ? text.Substring(text.Length - width)
-                : text.Substring(0, width));
+                ? text.Substring(end - width, width)
+                : text.Substring(start, width));
         }
 
-        string padding = new string(filler, width - text.Length);
-        return new MutableString(onLeft ? padding + text : text + padding);
+        string padding = new string(filler, width - length);
+        string selected = text.Substring(start, length);
+        return new MutableString(onLeft ? padding + selected : selected + padding);
     }
 
     private static int Count(object value) => (int)ToLong(value);

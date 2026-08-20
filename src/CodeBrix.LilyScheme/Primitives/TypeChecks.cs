@@ -74,7 +74,7 @@ public static class TypeChecks
     /// <param name="procedureName">The calling primitive.</param>
     /// <param name="position">The one-based argument position.</param>
     /// <returns>The throw, ready to raise.</returns>
-    private static SchemeThrow WrongType(object value, string procedureName, int position)
+    internal static SchemeThrow WrongType(object value, string procedureName, int position)
         => new SchemeThrow(
             Symbol.Intern("wrong-type-arg"),
             Pair.List(

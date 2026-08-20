@@ -596,6 +596,55 @@ letter sorts BELOW the punctuation that sits between the two ASCII cases --
 pair of letters and disagrees on every letter-versus-backslash pair, which
 surfaces only when something sorts identifiers beginning with one.
 
+SRFI-13 RANGES ARE HONOURED, AND OUT OF RANGE IS LOUD
+------------------------------------------------------
+string-index, string-rindex, string-count, string-pad, string-pad-right,
+string-reverse, string-titlecase, string-delete, string-filter,
+string-trim, string-trim-right, string-trim-both, string-any,
+string-every and string-tokenize take SRFI-13's optional [start [end]],
+validated as libguile validates it -- 0 <= start <= end <= length, a
+negative string-pad length included, with a violation raised as the
+catchable out-of-range naming the procedure -- and HONOURED. Most of
+the family once DECLARED the range and ignored it,
+which is the worst arity to ship: the call succeeds and the unranged
+answer comes back. font-table.ly splits a glyph name at the dot nearest
+its middle with one ranged string-rindex and one ranged string-index, so
+the ignored range moved the split with no diagnostic while every count
+stayed green. Srfi13RangeTests therefore fences every member with a case
+whose ranged answer DIFFERS from the unranged one; keep that property
+when touching them, because a fence whose ranged and unranged answers
+agree passes an accepts-and-ignores implementation.
+
+Five shapes worth knowing, all read out of libguile/srfi-13.c rather
+than out of the SRFI document:
+
+* A hit from string-index / string-rindex is an index into the WHOLE
+  string, never into the window -- doc-char's arithmetic subtracts it
+  from positions in the full name.
+* string-reverse and string-titlecase copy the whole string and
+  transform the [start, end) region INSIDE the copy. SRFI-13's own
+  reference implementation answers just the region for string-reverse;
+  Guile does not, and the oracle wins over the document.
+* string-pad, string-pad-right, string-delete, string-filter, the
+  string-trim family and string-tokenize build their answer from the
+  region ALONE -- characters outside it are dropped, not kept, even
+  when nothing gets trimmed or filtered. string-pad truncates keeping
+  the RIGHT of the region; string-pad-right the left. string-pad's CHR
+  must be a character (wrong-type-arg otherwise, as SCM_VALIDATE_CHAR
+  raises); it was once silently replaced with a space.
+* string-any and string-every with a PREDICATE answer the value of the
+  LAST call made -- the truthy hit itself for string-any, the final
+  result (or #t over an empty window) for string-every -- while a char
+  or char-set criterion answers a plain boolean. libguile returns its
+  `res' variable; washing the answer through #t is a divergence that
+  every boolean-context caller hides.
+* A wrong-typed CHAR_PRED raises the positioned wrong-type-arg BEFORE
+  the search loop, exactly as libguile's SCM_ASSERT does -- so an
+  EMPTY window rejects it too. Matches itself still answers #f for an
+  unknown criterion; the loudness lives in CheckCriterion at the top
+  of each primitive (string-split included), which is where Guile
+  puts it.
+
 PORTS ARE FLUSHED BY WHOEVER OWNS THE RUN
 ------------------------------------------
 open-output-file takes Guile's #:binary and #:encoding keywords, mirroring the
@@ -1222,6 +1271,23 @@ The suite's classes, by what each one fences:
                             R7RS's vector-map does not), and the ranged
                             vector-copy its importers reach through the
                             range-capable core binding
+    Srfi13RangeTests        the optional [start end] ranges of the SRFI-13
+                            string family (see SRFI-13 RANGES ARE HONOURED
+                            above): every fence a case whose ranged answer
+                            DIFFERS from the unranged one, so a range that
+                            is accepted and ignored cannot pass --
+                            font-table.ly's middle-dot split end to end,
+                            string-reverse / string-titlecase transforming
+                            the region INSIDE a whole-string copy,
+                            string-delete / string-filter / string-trim /
+                            string-tokenize answering from the window
+                            alone, string-any / string-every answering the
+                            predicate's own last value, char-set and
+                            predicate criteria through the ranged twins,
+                            out-of-range raised catchably for a bad bound
+                            on every member, and a wrong-typed criterion
+                            raising the positioned wrong-type-arg even
+                            over an empty window
     SmokeTests              the library assembly loads at all, and every
                             vendored .scm resource arrives WITHOUT
                             carriage returns -- the sweep that stops a

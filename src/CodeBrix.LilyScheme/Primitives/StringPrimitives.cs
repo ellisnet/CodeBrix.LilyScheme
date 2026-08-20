@@ -163,26 +163,6 @@ public static class StringPrimitives
             return new MutableString(builder.ToString());
         });
 
-        interpreter.DefinePrimitive("string-index", 2, 2, a =>
-        {
-            string text = Text(a[0], "string-index");
-            if (a[1] is SchemeChar target)
-            {
-                int position = text.IndexOf((char)target.CodePoint);
-                return position < 0 ? (object)false : (long)position;
-            }
-
-            for (int i = 0; i < text.Length; i++)
-            {
-                if (Evaluator.IsTrue(interpreter.Evaluator.Apply(a[1], new object[] { SchemeChar.Get(text[i]) })))
-                {
-                    return (long)i;
-                }
-            }
-
-            return false;
-        });
-
         interpreter.DefinePrimitive("string-join", 1, 3, a =>
         {
             List<object> parts = Pair.ToList(a[0]);
@@ -227,21 +207,35 @@ public static class StringPrimitives
         {
             string first = Text(a[0], "string=");
             string second = Text(a[1], "string=");
-            int start1 = SubstringBound(a, 2, 0, first.Length);
-            int end1 = SubstringBound(a, 3, first.Length, first.Length);
-            int start2 = SubstringBound(a, 4, 0, second.Length);
-            int end2 = SubstringBound(a, 5, second.Length, second.Length);
-            if (end1 < start1 || end2 < start2)
-            {
-                throw SubstringRangeError(end1 < start1 ? a[3] : a[5]);
-            }
-
+            SubstringSpec(a, 2, first.Length, "string=", out int start1, out int end1);
+            SubstringSpec(a, 4, second.Length, "string=", out int start2, out int end2);
             return end1 - start1 == end2 - start2
                 && string.CompareOrdinal(first, start1, second, start2, end1 - start1) == 0;
         });
     }
 
-    private static int SubstringBound(object[] arguments, int index, int fallback, int limit)
+    // SRFI-13's optional [start [end]] range, validated as libguile/strings.c's
+    // scm_i_get_substring_spec validates it -- 0 <= start <= end <= length, each bound
+    // checked as it is read, the offending VALUE named in the throw -- raising the
+    // catchable out-of-range Guile raises. The answer is a window into the WHOLE
+    // string: callers index the original text, never a copy shifted to zero.
+    internal static void SubstringSpec(
+        object[] arguments,
+        int index,
+        int length,
+        string procedureName,
+        out int start,
+        out int end)
+    {
+        start = SubstringBound(arguments, index, 0, length, procedureName);
+        end = SubstringBound(arguments, index + 1, length, length, procedureName);
+        if (end < start)
+        {
+            throw SubstringRangeError(arguments[index + 1], procedureName);
+        }
+    }
+
+    internal static int SubstringBound(object[] arguments, int index, int fallback, int limit, string procedureName)
     {
         if (arguments.Length <= index)
         {
@@ -251,17 +245,17 @@ public static class StringPrimitives
         int value = (int)SchemeNumber.ToBigInteger(arguments[index]);
         if (value < 0 || value > limit)
         {
-            throw SubstringRangeError(arguments[index]);
+            throw SubstringRangeError(arguments[index], procedureName);
         }
 
         return value;
     }
 
-    private static SchemeThrow SubstringRangeError(object value)
+    internal static SchemeThrow SubstringRangeError(object value, string procedureName)
         => new SchemeThrow(
             Symbol.Intern("out-of-range"),
             Pair.List(
-                new MutableString("string="),
+                new MutableString(procedureName),
                 new MutableString("Argument out of range: ~S"),
                 Pair.List(value),
                 false));
