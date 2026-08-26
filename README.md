@@ -7,6 +7,21 @@ CodeBrix.LilyScheme supports applications and assemblies that target Microsoft .
 Microsoft .NET version 10.0 is a Long-Term Supported (LTS) version of .NET, and was released on Nov 11, 2025; and will be actively supported by Microsoft until Nov 14, 2028.
 Please update your C#/.NET code and projects to the latest LTS version of Microsoft .NET.
 
+## Installation
+
+```
+dotnet add package CodeBrix.LilyScheme.LgplLicenseForever
+```
+
+Note that the NuGet package ID and the namespace are different - there is no package named plain `CodeBrix.LilyScheme`:
+
+* NuGet package ID: `CodeBrix.LilyScheme.LgplLicenseForever`
+* Assembly and root namespace: `CodeBrix.LilyScheme` - i.e. `using CodeBrix.LilyScheme;`
+
+The `.LgplLicenseForever` suffix is part of the package ID only, chosen so that the LGPL-3.0-or-later license identification travels with the package name. The package has no NuGet dependencies and no native libraries; it depends only on the .NET base class library, and runs on Windows, Linux and macOS. XML documentation (IntelliSense) ships alongside the assembly.
+
+**Read the License section below before taking this dependency.** Unlike the rest of the CodeBrix family, this package is copyleft: LGPL-3.0-or-later permits linking from a differently-licensed application, but it attaches conditions - notably that your recipients must be able to relink your application against a modified build of this library, so it must not be ILMerged, ILRepack'd or shipped only as a trimmed or single-file artifact from which it cannot be replaced. If your project cannot accept those conditions, do not reference this package.
+
 ## Status
 
 CodeBrix.LilyScheme is working software. It runs the Scheme layer of a full music-engraving
