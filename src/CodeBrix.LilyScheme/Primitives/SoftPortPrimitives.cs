@@ -241,7 +241,7 @@ public static class SoftPortPrimitives
         {
             Symbol.Intern("ice-9"), Symbol.Intern("soft-ports"),
         }));
-        module.Define(
+        module.DefinePublic(
             Symbol.Intern("make-soft-port"),
             new Primitive("make-soft-port", 0, -1, a => MakeSoftPort(interpreter, a)));
     }

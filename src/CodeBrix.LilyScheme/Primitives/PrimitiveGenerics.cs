@@ -37,6 +37,30 @@ namespace CodeBrix.LilyScheme.Primitives;
 public static class PrimitiveGenerics
 {
     /// <summary>
+    /// Builds Guile's <c>goops-error</c> for a generic that found no applicable method:
+    /// <c>(goops-error #f "No applicable method for ~S in call ~S" (GENERIC (NAME . ARGS)) ())</c>.
+    /// <para>
+    /// MEASURED on the pinned 2.27.2: subr <c>#f</c>, the generic OBJECT (which prints as
+    /// <c>#&lt;&lt;generic&gt; + (2)&gt;</c>) and the CALL as a list headed by the name, and
+    /// an EMPTY LIST for the data slot, not <c>#f</c>. For an n-ary arithmetic call the
+    /// call shown is the PAIR that failed, because Guile folds pairwise:
+    /// <c>(+ 1 2 "x")</c> reports <c>(+ 3 "x")</c>.
+    /// </para>
+    /// </summary>
+    /// <param name="generic">The generic that had no applicable method.</param>
+    /// <param name="name">The name the call was made through.</param>
+    /// <param name="arguments">The arguments of the failing call.</param>
+    /// <returns>The throw, ready to raise.</returns>
+    public static SchemeThrow NoApplicableMethod(GenericFunction generic, string name, object[] arguments)
+        => new SchemeThrow(
+            Symbol.Intern("goops-error"),
+            Pair.List(
+                false,
+                new MutableString("No applicable method for ~S in call ~S"),
+                Pair.List(generic, new Pair(Symbol.Intern(name ?? "#f"), Pair.ListFrom(arguments))),
+                Nil.Instance));
+
+    /// <summary>
     /// The names Guile declares generic-capable. Measured from the pinned Guile source
     /// rather than recalled: every <c>SCM_PRIMITIVE_GENERIC</c> in <c>libguile/*.c</c>,
     /// plus <c>display</c> and <c>write</c>, which use the older <c>SCM_GPROC</c> form in

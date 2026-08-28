@@ -82,20 +82,26 @@ public sealed class Interpreter
     public bool IsPsyntaxLoaded { get; set; }
 
     /// <summary>
-    /// Gets or sets the OPT-IN fidelity switch for Guile's import-side module privacy.
+    /// Gets or sets whether a <c>use-modules</c> clause without <c>#:select</c> imports the
+    /// module's PUBLIC INTERFACE, as Guile does — the default — or the WHOLE module.
     /// <para>
-    /// Off (the default), a <c>use-modules</c> without <c>#:select</c> puts the WHOLE
-    /// module on the importer's use list, so visible scope is wider than Guile's and
-    /// never narrower — the long-standing recorded divergence, and the behavior the
-    /// LilyPond layer's module world was verified under. On, such a clause imports the
-    /// module's public interface instead, as Guile documents: only exported names
-    /// arrive, through a live view that keeps growing with the module's exports. The
-    /// switch is consulted each time a <c>use-modules</c> clause is resolved, so it
-    /// should be set before loading the code it is meant to govern. <c>#:select</c>
-    /// clauses and the implicit core import behave identically in both settings.
+    /// On (the default since 2026-08-28), only exported names arrive, through a live view
+    /// that keeps growing with the module's exports, exactly as Guile documents. Off, the
+    /// whole module goes on the importer's use list, so private names are visible and
+    /// scope is wider than Guile's — the behaviour the LilyPond layer's module world was
+    /// verified under, which CodeBrix.LilyPort therefore selects EXPLICITLY at interpreter
+    /// creation until its own corpus has been swept under the narrow import. The switch
+    /// is consulted each time a <c>use-modules</c> clause is resolved, so it must be set
+    /// before loading the code it is meant to govern. <c>#:select</c> clauses and the
+    /// implicit core import behave identically in both settings.
+    /// </para>
+    /// <para>
+    /// //was previously: <see langword="false"/> by default (the wide import), with the
+    /// Guile-exact position opt-in. Flipped under the ruling that LilyScheme works like
+    /// Guile wherever possible; consumers that need the wide import say so.
     /// </para>
     /// </summary>
-    public bool NarrowModuleImports { get; set; }
+    public bool NarrowModuleImports { get; set; } = true;
 
     /// <summary>
     /// Gets or sets the expansion cache <see cref="Runtime.SchemeBootstrap.LoadExpanded"/>
@@ -149,12 +155,31 @@ public sealed class Interpreter
     public void DefineValue(string name, object value)
         => GuileModule.Define(Symbol.Intern(name), value);
 
-    /// <summary>Evaluates a single form in the current module.</summary>
+    /// <summary>
+    /// Evaluates a single form in the current module, the way Guile's <c>eval</c> does:
+    /// macro-expanded through psyntax once psyntax is loaded, and through the core
+    /// evaluator before that (the boot layer).
+    /// <para>
+    /// //was previously: always the core evaluator, which does not expand macros. A macro
+    /// reached this way — <c>(markup …)</c> from LilyPond's <c>(lily)</c> module through
+    /// <c>EvalString</c> — failed as <c>Wrong type to apply: #&lt;syntax-transformer markup&gt;</c>,
+    /// while the same form loaded from a module file worked. Guile's <c>eval</c> and
+    /// <c>eval-string</c> both expand (MEASURED on the pinned 2.27.2: an <c>eval-string</c>
+    /// that defines a <c>syntax-rules</c> macro and uses it in the next form answers the
+    /// expansion). Changed 2026-08-28. <see cref="LoadFile"/> and
+    /// <see cref="LoadFileWithProgress"/> keep the core evaluator on purpose: they are the
+    /// boot paths that load psyntax itself.
+    /// </para>
+    /// </summary>
     /// <param name="form">The form to evaluate.</param>
     /// <returns>The value of the form.</returns>
-    public object Eval(object form) => Evaluator.Eval(form, null, CurrentModule);
+    public object Eval(object form) => Primitives.ControlPrimitives.EvalAny(this, form, CurrentModule);
 
-    /// <summary>Reads and evaluates every form in a string, returning the last value.</summary>
+    /// <summary>
+    /// Reads and evaluates every form in a string, returning the last value — expanding
+    /// macros once psyntax is loaded, exactly as <see cref="Eval"/> does (Guile's
+    /// <c>eval-string</c>).
+    /// </summary>
     /// <param name="text">The source text.</param>
     /// <param name="fileName">A name used in error messages.</param>
     /// <returns>The value of the final form, or unspecified when there are none.</returns>
@@ -164,7 +189,7 @@ public sealed class Interpreter
         object result = Unspecified.Instance;
         foreach (object form in forms)
         {
-            result = Evaluator.Eval(form, null, CurrentModule);
+            result = Primitives.ControlPrimitives.EvalAny(this, form, CurrentModule);
         }
 
         return result;

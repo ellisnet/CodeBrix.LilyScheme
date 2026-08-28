@@ -472,6 +472,39 @@ public sealed class TreeIlEvaluator
     }
 
     private LexicalEnvironment BindArguments(TreeIlClosure closure, object[] arguments, out object body)
+        => BindArguments(closure, closure, arguments, out body);
+
+    /// <summary>
+    /// Binds a call's arguments to a <c>lambda-case</c>'s parameters, chaining to the
+    /// case's alternate clause when the count does not fit and raising Guile's
+    /// <c>wrong-number-of-args</c> when no clause fits.
+    /// <para>
+    /// The error is the VM's <c>vm_error_wrong_num_args</c> (<c>libguile/vm.c</c>): key
+    /// <c>wrong-number-of-args</c>, subr <c>#f</c>, message
+    /// <c>"Wrong number of arguments to ~A"</c>, and the PROCEDURE OBJECT as the one
+    /// format argument — which is why Guile's report reads
+    /// <c>Wrong number of arguments to #&lt;procedure unfold-repeats (types music)&gt;</c>.
+    /// The procedure named is the one the caller applied (<paramref name="applied"/>),
+    /// not the alternate clause that finally refused: a <c>case-lambda</c> reports
+    /// itself, not its last arm.
+    /// </para>
+    /// <para>
+    /// //was previously: a missing required argument was bound to
+    /// <c>Unspecified.Instance</c> and surplus arguments were dropped, so a call with the
+    /// wrong arity ran the body anyway. Found 2026-08-28 through LilyPond: Mutopia files
+    /// call <c>unfold-repeats</c> from embedded Scheme with its pre-2.23 arity, and where
+    /// 2.27.2 refuses the file the port silently engraved it with <c>music</c> unbound.
+    /// The classic <see cref="Runtime.Evaluator"/> closure path had checked all along;
+    /// this path — every psyntax-expanded procedure — had not.
+    /// </para>
+    /// </summary>
+    /// <param name="applied">The procedure the caller applied, named in the error.</param>
+    /// <param name="closure">The clause being tried; the same as <paramref name="applied"/> until an alternate is reached.</param>
+    /// <param name="arguments">The evaluated arguments.</param>
+    /// <param name="body">Receives the clause's body.</param>
+    /// <returns>The frame the body runs in.</returns>
+    private LexicalEnvironment BindArguments(
+        TreeIlClosure applied, TreeIlClosure closure, object[] arguments, out object body)
     {
         SchemeStruct lambdaCase = closure.LambdaCase;
         object[] fields = lambdaCase.Fields;
@@ -483,16 +516,29 @@ public sealed class TreeIlEvaluator
         List<object> gensyms = Pair.ToList(fields[6]);
 
         // A lambda-case may chain to an alternate clause when the argument count does
-        // not fit, which is how case-lambda and optional arities are represented.
+        // not fit, which is how case-lambda and optional arities are represented. A
+        // keyword clause has no positional ceiling: its tail is keyword/value pairs,
+        // read below.
         int minimum = required.Count;
-        int maximum = rest is Symbol ? int.MaxValue : minimum + optional.Count;
-        if ((arguments.Length < minimum || arguments.Length > maximum)
-            && fields[8] is SchemeStruct alternate)
+        int maximum = rest is Symbol || fields[4] is Pair ? int.MaxValue : minimum + optional.Count;
+        if (arguments.Length < minimum || arguments.Length > maximum)
         {
-            return BindArguments(
-                new TreeIlClosure(alternate, closure.Environment, closure.Module),
-                arguments,
-                out body);
+            if (fields[8] is SchemeStruct alternate)
+            {
+                return BindArguments(
+                    applied,
+                    new TreeIlClosure(alternate, closure.Environment, closure.Module),
+                    arguments,
+                    out body);
+            }
+
+            throw new SchemeThrow(
+                Symbol.Intern("wrong-number-of-args"),
+                Pair.List(
+                    false,
+                    new MutableString("Wrong number of arguments to ~A"),
+                    Pair.List(applied),
+                    false));
         }
 
         LexicalEnvironment frame = new LexicalEnvironment(closure.Environment, gensyms.Count);
@@ -501,8 +547,7 @@ public sealed class TreeIlEvaluator
 
         for (int i = 0; i < required.Count && slot < gensyms.Count; i++, slot++)
         {
-            object value = argumentIndex < arguments.Length ? arguments[argumentIndex++] : Unspecified.Instance;
-            frame.Define((Symbol)gensyms[slot], value);
+            frame.Define((Symbol)gensyms[slot], arguments[argumentIndex++]);
         }
 
         for (int i = 0; i < optional.Count && slot < gensyms.Count; i++, slot++)

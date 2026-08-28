@@ -421,17 +421,28 @@ public static class GoopsPrimitives
                 return PrimitiveGenerics.Enable(capable);
             }
 
-            GenericFunction generic = new GenericFunction { Name = name.Name };
-
-            // Specializing a name that already holds an ordinary procedure keeps that
-            // procedure as the generic's default. LilyPond's operators.scm adds moment
-            // arithmetic to '+' and '*'; discarding the arithmetic already bound there
-            // would break every other caller, silently and everywhere.
-            if (current is Procedure inherited)
+            // A name that already holds an ORDINARY procedure is refused, as GOOPS refuses
+            // it: add-method! on a <procedure> that is not generic-capable falls through to
+            // its <top> method, (goops-error #f "~S is not a valid generic function" (proc)
+            // ()). MEASURED on the pinned 2.27.2 with a plain (define (qux x) ...) followed
+            // by (define-method (qux (x <foo>)) ...).
+            //
+            //was previously: the procedure became the new generic's Fallback -- "keeps that
+            // procedure as the generic's default" -- a leniency written before generic-capable
+            // PRIMITIVES were extended in place (the case it was written for, LilyPond's
+            // operators.scm on `+' and `*', is the branch above now). Changed 2026-08-28.
+            if (current is Procedure plain)
             {
-                generic.Fallback = inherited;
+                throw new SchemeThrow(
+                    Symbol.Intern("goops-error"),
+                    Pair.List(
+                        false,
+                        new MutableString("~S is not a valid generic function"),
+                        Pair.List(plain),
+                        Nil.Instance));
             }
 
+            GenericFunction generic = new GenericFunction { Name = name.Name };
             interpreter.CurrentModule.Define(name, generic);
             return generic;
         });
@@ -472,13 +483,9 @@ public static class GoopsPrimitives
                 return interpreter.Evaluator.Apply(generic.Fallback, arguments);
             }
 
-            throw new SchemeThrow(
-                Symbol.Intern("goops-error"),
-                Pair.List(
-                    new MutableString(generic.Name ?? "generic"),
-                    new MutableString("No applicable method"),
-                    Nil.Instance,
-                    false));
+            //was previously: (goops-error "name" "No applicable method" () #f) -- Guile's shape
+            // names the generic object and the whole call; see PrimitiveGenerics.NoApplicableMethod.
+            throw PrimitiveGenerics.NoApplicableMethod(generic, generic.Name, arguments);
         });
     }
 

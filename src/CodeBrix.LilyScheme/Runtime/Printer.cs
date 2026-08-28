@@ -334,6 +334,17 @@ public static class Printer
                 return;
             }
 
+            case Primitives.GenericFunction generic:
+                // GOOPS prints a generic as its class, its name and its method count --
+                // `#<<generic> + (2)>' -- which is the form Guile's goops-error carries in
+                // "No applicable method for ~S". MEASURED on the pinned 2.27.2.
+                builder.Append("#<<generic> ")
+                    .Append(generic.Name ?? "#f")
+                    .Append(" (")
+                    .Append(generic.Methods.Count.ToString(CultureInfo.InvariantCulture))
+                    .Append(")>");
+                return;
+
             case Procedure procedure:
                 // Guile prints every procedure through the program printer, and while the
                 // re-entry latch is set that printer is bypassed for the low-level form.

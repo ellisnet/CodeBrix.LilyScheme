@@ -58,7 +58,7 @@ public class NarrowImportTests
     }
 
     [Fact]
-    public void wide_stays_the_default_and_imports_the_private_name_too()
+    public void wide_is_still_available_and_imports_the_private_name_too()
     {
         //Arrange / Act
         string result = Value(
@@ -66,6 +66,20 @@ public class NarrowImportTests
 
         //Assert
         result.Should().Be("(41 40)");
+    }
+
+    [Fact]
+    public void narrow_is_the_default_as_it_is_in_guile()
+    {
+        //Arrange
+        // Since 2026-08-28 a fresh interpreter imports the way Guile documents: only a
+        // module's public interface. The wide import is the consumer's explicit choice
+        // (CodeBrix.LilyPort makes it, until its corpus is swept under this default).
+        bool defaultValue = false;
+        Interpreter.RunWithLargeStack(() => defaultValue = new Interpreter().NarrowModuleImports);
+
+        //Act / Assert
+        defaultValue.Should().BeTrue();
     }
 
     [Fact]

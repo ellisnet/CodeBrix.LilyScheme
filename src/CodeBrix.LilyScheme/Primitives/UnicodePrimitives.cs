@@ -45,7 +45,7 @@ public static class UnicodePrimitives
             Symbol.Intern("ice-9"), Symbol.Intern("unicode"),
         }));
 
-        module.Define(
+        module.DefinePublic(
             Symbol.Intern("char->formal-name"),
             new Primitive("char->formal-name", 1, 1, a =>
             {
@@ -57,7 +57,7 @@ public static class UnicodePrimitives
                 return name == null ? (object)false : new MutableString(name);
             }));
 
-        module.Define(
+        module.DefinePublic(
             Symbol.Intern("formal-name->char"),
             new Primitive("formal-name->char", 1, 1, a =>
             {

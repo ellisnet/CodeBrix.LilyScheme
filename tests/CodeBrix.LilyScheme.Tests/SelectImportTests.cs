@@ -28,7 +28,7 @@ public class SelectImportTests
     /// supplier itself imports".
     /// </summary>
     private const string Supplier = @"
-(define-module (test supplier))
+(define-module (test supplier) #:export (alpha beta))
 (define alpha 'alpha-value)
 (define beta 'beta-value)
 ";
@@ -136,11 +136,14 @@ public class SelectImportTests
     }
 
     [Fact]
-    public void a_clause_with_no_select_still_imports_the_whole_module()
+    public void a_clause_with_no_select_imports_the_whole_public_interface()
     {
         //Arrange / Act
         // The control. Restricting a clause that never asked to be restricted would be its
-        // own bug, and it is the shape almost every use-modules line in LilyPond has.
+        // own bug, and it is the shape almost every use-modules line in LilyPond has. Since
+        // 2026-08-28 "the whole module" means its PUBLIC INTERFACE, as in Guile — which is
+        // why the supplier above exports alpha and beta; NarrowImportTests fences the
+        // private-name side of that.
         string result = Eval(
             Supplier,
             "(define-module (test consumer))",

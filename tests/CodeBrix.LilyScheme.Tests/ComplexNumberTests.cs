@@ -118,7 +118,7 @@ public class ComplexNumberTests
         Eval("(complex? (make-rectangular 3 4))").Should().Be("#t");
         Eval("(real? (make-rectangular 3 4))").Should().Be("#f");
         Eval("(rational? (make-rectangular 3 4))").Should().Be("#f");
-        Eval("(integer? (make-rectangular 3 0))").Should().Be("#f");
+        Eval("(integer? (make-rectangular 3 0.0))").Should().Be("#f");
 
         Eval("(number? 3)").Should().Be("#t");
         Eval("(complex? 3)").Should().Be("#t");
@@ -204,17 +204,22 @@ public class ComplexNumberTests
     }
 
     [Fact]
-    public void a_product_with_an_exact_zero_is_exact_zero()
+    public void a_product_with_an_exact_zero_is_the_computed_inexact_complex()
     {
         //Arrange & Act & Assert
-        // Guile's rule, and stencil.scm depends on it: the middle vertex of every arrow
-        // head is the literal 0, which is rotated by a complex and then read back with
-        // real-part/imag-part. A ComplexNumber(0,0) would answer 0.0 there rather than 0.
-        Eval("(* 0 1+2i)").Should().Be("0");
-        Eval("(* 1+2i 0)").Should().Be("0");
-        Eval("(real-part (* 0 1+2i))").Should().Be("0");
+        // MEASURED on the pinned 2.27.2 (Guile 3.0): an exact zero factor does NOT
+        // short-circuit a complex product -- (* 0 1+2i) is 0.0+0.0i and its real part is
+        // 0.0. //was previously: the test asserted exact 0 as "Guile's rule", with the
+        // claim that stencil.scm's arrow heads (the literal 0 rotated by a complex, read
+        // back with real-part) depended on it; they run on 0.0 in LilyPond itself.
+        Eval("(* 0 1+2i)").Should().Be("0.0+0.0i");
+        Eval("(* 1+2i 0)").Should().Be("0.0+0.0i");
+        Eval("(real-part (* 0 1+2i))").Should().Be("0.0");
 
-        // The control: an INEXACT zero does not take that branch.
+        // An INEXACT zero, the same.
         Eval("(complex? (* 0.0 1+2i))").Should().Be("#t");
+
+        // The REAL branch is unchanged and also Guile's: (* 0 1.5) is 0.0.
+        Eval("(* 0 1.5)").Should().Be("0.0");
     }
 }

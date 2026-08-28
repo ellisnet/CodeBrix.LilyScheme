@@ -462,35 +462,50 @@ public sealed class Evaluator
     {
         if (procedure is Primitive primitive)
         {
-            // A primitive declared generic-capable dispatches to the generic that
-            // enable-primitive-generic! hung off it, when the arguments fail to apply to
-            // the primitive itself. Selecting first and invoking otherwise is how that
-            // reads here: LilyPond's methods all carry real specializers, so numbers never
-            // match a <Moment> or <Pitch> method and ordinary arithmetic goes straight
-            // through. The check precedes the arity check because a method may legitimately
-            // accept a shape the primitive does not.
-            if (primitive.AttachedGeneric is Primitives.GenericFunction attached)
+            // GUILE'S ORDER FOR A PRIMITIVE GENERIC: arity first, then the PRIMITIVE, and
+            // only when the primitive's OWN type check fails does the call fall over to the
+            // generic that enable-primitive-generic! hung off it (SCM_WTA_DISPATCH_n in
+            // libguile). MEASURED on the pinned 2.27.2: with a method specialized on
+            // <integer> attached to `max', (max 1 2) still answers 2 -- the primitive ran and
+            // the method was never consulted; (max 1 "x") then raises goops-error "No
+            // applicable method", and (abs foo foo) with a one-argument method raises
+            // wrong-number-of-args before any dispatch.
+            //
+            //was previously: the attached generic was selected FIRST and the primitive was the
+            // fallback, and the arity check came after selection. That gave the same results
+            // whenever every method carried a real specializer (LilyPond's do), but it charged
+            // a method-selection pass to every arithmetic call in the LilyPond layer, and a
+            // type failure surfaced as the primitive's wrong-type-arg where Guile raises
+            // goops-error. Changed 2026-08-28 under the ruling that LilyScheme works like
+            // Guile wherever possible (the two-mode proposal's item 4b).
+            if (arguments.Length < primitive.MinimumArgumentCount
+                || (primitive.MaximumArgumentCount >= 0 && arguments.Length > primitive.MaximumArgumentCount))
+            {
+                // vm_error_wrong_num_args: subr #f, the procedure object as the one argument.
+                throw new SchemeThrow(
+                    Symbol.Intern("wrong-number-of-args"),
+                    Pair.List(
+                        false,
+                        new MutableString("Wrong number of arguments to ~A"),
+                        Pair.List(primitive),
+                        false));
+            }
+
+            try
+            {
+                return primitive.Invoke(arguments);
+            }
+            catch (SchemeThrow thrown) when (primitive.AttachedGeneric is Primitives.GenericFunction attached
+                && IsOwnTypeFailure(thrown, primitive))
             {
                 Primitives.GenericMethod specialized = attached.Select(arguments);
                 if (specialized != null)
                 {
                     return Apply(specialized.Implementation, arguments);
                 }
-            }
 
-            if (arguments.Length < primitive.MinimumArgumentCount
-                || (primitive.MaximumArgumentCount >= 0 && arguments.Length > primitive.MaximumArgumentCount))
-            {
-                throw new SchemeThrow(
-                    Symbol.Intern("wrong-number-of-args"),
-                    Pair.List(
-                        new MutableString(primitive.Name ?? "primitive"),
-                        new MutableString("Wrong number of arguments"),
-                        Nil.Instance,
-                        false));
+                throw Primitives.PrimitiveGenerics.NoApplicableMethod(attached, primitive.Name, arguments);
             }
-
-            return primitive.Invoke(arguments);
         }
 
         if (procedure is TreeIl.TreeIlClosure treeIlClosure)
@@ -516,13 +531,9 @@ public sealed class Evaluator
                 return Apply(generic.Fallback, arguments);
             }
 
-            throw new SchemeThrow(
-                Symbol.Intern("goops-error"),
-                Pair.List(
-                    new MutableString(generic.Name ?? "generic"),
-                    new MutableString("No applicable method for ~S"),
-                    Pair.List(arguments.Length > 0 ? arguments[0] : (object)false),
-                    false));
+            //was previously: (goops-error "name" "No applicable method for ~S" (first-arg) #f).
+            // Guile's shape, measured: the generic object and the whole call.
+            throw Primitives.PrimitiveGenerics.NoApplicableMethod(generic, generic.Name, arguments);
         }
 
         if (procedure is CaseLambdaProcedure caseLambda)
@@ -557,6 +568,21 @@ public sealed class Evaluator
                 Pair.List(procedure),
                 false));
     }
+
+    /// <summary>
+    /// Whether a throw is the primitive's OWN argument type check failing — the one
+    /// condition under which Guile's <c>SCM_WTA_DISPATCH</c> consults the attached generic.
+    /// A <c>wrong-type-arg</c> raised by a NESTED primitive names that inner primitive in its
+    /// subr slot and passes through untouched, keeping the inner attribution.
+    /// </summary>
+    /// <param name="thrown">The throw that escaped the primitive.</param>
+    /// <param name="primitive">The primitive that was applied.</param>
+    /// <returns><see langword="true"/> when the generic should be consulted.</returns>
+    private static bool IsOwnTypeFailure(SchemeThrow thrown, Primitive primitive)
+        => ReferenceEquals(thrown.Key, Symbol.Intern("wrong-type-arg"))
+            && thrown.Arguments is Pair arguments
+            && arguments.Car is MutableString subr
+            && string.Equals(subr.ToString(), primitive.Name, StringComparison.Ordinal);
 
     private LexicalEnvironment BindArguments(Closure closure, object[] arguments)
     {

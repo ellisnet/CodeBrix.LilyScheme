@@ -127,6 +127,119 @@ public class PrimitiveGenericTests
     }
 
     [Fact]
+    public void the_primitive_runs_first_and_a_method_on_its_own_domain_is_never_consulted()
+    {
+        //Arrange / Act
+        // GUILE'S ORDER, MEASURED on the pinned 2.27.2: with a method specialized on
+        // <integer> attached to max, (max 1 2) is still 2 -- scm_max ran and the generic
+        // was never asked. The method exists only for arguments the primitive refuses.
+        string result = Eval(
+            "(define-method (max (a <integer>) (b <integer>)) 'intercepted)",
+            "(list (max 1 2) (max 1 2 3))");
+
+        //Assert
+        result.Should().Be("(2 3)");
+    }
+
+    [Fact]
+    public void a_type_failure_falls_over_to_the_generic_and_a_miss_is_guiles_goops_error()
+    {
+        //Arrange / Act
+        // SCM_WTA_DISPATCH_2: the primitive's own type check fails, the attached generic
+        // is consulted, and with no applicable method Guile raises
+        // (goops-error #f "No applicable method for ~S in call ~S" (GENERIC CALL) ())
+        // -- the generic printed with its method count, the call as a list, and an EMPTY
+        // LIST for data. Measured character for character.
+        string result = Eval(
+            BoxClass,
+            "(define-method (- (a <Box>) (b <Box>)) b1)",
+            "(catch #t (lambda () (- b1 \"x\")) (lambda (key . args) (cons key args)))");
+
+        //Assert
+        result.Should().Be(
+            "(goops-error #f \"No applicable method for ~S in call ~S\" (#<<generic> - (1)> (- #<<Box>> \"x\")) ())");
+    }
+
+    [Fact]
+    public void an_n_ary_call_reports_the_pair_that_failed()
+    {
+        //Arrange / Act
+        // Guile folds pairwise, so the call in the error is the PAIR: (+ 1 2 b) fails as
+        // (+ 3 b), and (+ b b b) with a two-Box method fails on the METHOD'S RESULT paired
+        // with the third argument.
+        string result = Eval(
+            BoxClass,
+            "(define-method (+ (a <Box>) (b <Box>)) 'box-plus)",
+            "(list (catch #t (lambda () (+ 1 2 b1)) (lambda (key . args) (cadr (caddr args))))"
+            + " (catch #t (lambda () (+ b1 b2 b1)) (lambda (key . args) (cadr (caddr args)))))");
+
+        //Assert
+        result.Should().Be("((+ 3 #<<Box>>) (+ box-plus #<<Box>>))");
+    }
+
+    [Fact]
+    public void one_plus_and_one_minus_go_through_the_generic_as_plus_and_minus()
+    {
+        //Arrange / Act
+        // 1+ IS (+ x 1) in Guile, generic and all: the Box method does not apply to
+        // (b1 1), and the reported call names + with that pair.
+        string result = Eval(
+            BoxClass,
+            "(define-method (+ (a <Box>) (b <Box>)) 'box-plus)",
+            "(catch #t (lambda () (1+ b1)) (lambda (key . args) (cadr (caddr args))))");
+
+        //Assert
+        result.Should().Be("(+ #<<Box>> 1)");
+    }
+
+    [Fact]
+    public void arity_is_checked_before_any_dispatch()
+    {
+        //Arrange / Act
+        // (abs b1 b2) with a one-argument Box method on abs: Guile refuses the CALL by
+        // arity -- vm_error_wrong_num_args naming the procedure -- and never dispatches.
+        string result = Eval(
+            BoxClass,
+            "(define-method (abs (a <Box>)) 'abs-box)",
+            "(list (abs b1) (abs -2)"
+            + " (catch #t (lambda () (abs b1 b2)) (lambda (key . args) (list key (car args) (cadr args)))))");
+
+        //Assert
+        result.Should().Be("(abs-box 2 (wrong-number-of-args #f \"Wrong number of arguments to ~A\"))");
+    }
+
+    [Fact]
+    public void a_generic_with_no_applicable_method_names_itself_and_the_call()
+    {
+        //Arrange / Act
+        string result = Eval(
+            "(define-generic bar)",
+            "(list (format #f \"~s\" bar)"
+            + " (catch #t (lambda () (bar 1 2)) (lambda (key . args) (cons key args))))");
+
+        //Assert
+        result.Should().Be(
+            "(\"#<<generic> bar (0)>\" (goops-error #f \"No applicable method for ~S in call ~S\" (#<<generic> bar (0)> (bar 1 2)) ()))");
+    }
+
+    [Fact]
+    public void define_method_on_a_plain_procedure_is_refused_as_goops_refuses_it()
+    {
+        //Arrange / Act
+        // MEASURED: a name holding an ordinary procedure is not silently turned into a
+        // generic with that procedure as its default; add-method! on a <procedure> that is
+        // not generic-capable is (goops-error #f "~S is not a valid generic function" (proc) ()).
+        string result = Eval(
+            BoxClass,
+            "(define (qux x) (list 'plain x))",
+            "(catch #t (lambda () (define-method (qux (x <Box>)) 'box-qux) 'defined)"
+            + " (lambda (key . args) (list key (car args) (cadr args) (cadddr args))))");
+
+        //Assert
+        result.Should().Be("(goops-error #f \"~S is not a valid generic function\" ())");
+    }
+
+    [Fact]
     public void an_accessor_carries_a_setter_for_generalized_assignment()
     {
         //Arrange

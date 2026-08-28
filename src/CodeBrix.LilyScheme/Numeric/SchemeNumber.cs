@@ -89,10 +89,18 @@ public sealed class ComplexNumber
 
     /// <summary>Returns the external representation, in Scheme's rectangular notation.</summary>
     /// <returns>The number written as <c>a+bi</c>.</returns>
+    /// <summary>
+    /// Returns Guile's external representation: BOTH parts written as the inexact reals
+    /// they are — <c>1.0+2.0i</c>, <c>0.0+1.0i</c>, <c>-1.0-2.0i</c> — never as integers.
+    /// MEASURED on the pinned 2.27.2 (<c>1+2i</c> reads back and prints as <c>1.0+2.0i</c>;
+    /// <c>(sqrt -4)</c> prints <c>0.0+2.0i</c>).
+    /// <para>//was previously: <c>double.ToString</c> on each part, which wrote <c>1+2i</c>.</para>
+    /// </summary>
+    /// <returns>The external representation.</returns>
     public override string ToString()
-        => Real.ToString(CultureInfo.InvariantCulture)
-           + (Imaginary < 0 ? "-" : "+")
-           + Math.Abs(Imaginary).ToString(CultureInfo.InvariantCulture)
+        => SchemeNumber.NumberToString(Real, 10)
+           + (Imaginary < 0 || (Imaginary == 0 && double.IsNegative(Imaginary)) ? "-" : "+")
+           + SchemeNumber.NumberToString(Math.Abs(Imaginary), 10)
            + "i";
 }
 
@@ -334,14 +342,15 @@ public static class SchemeNumber
     {
         if (EitherComplex(a, b))
         {
-            // Guile answers EXACT 0 for a product with an exact zero, whatever the other
-            // operand is, and stencil.scm relies on it: the middle vertex of every arrow
-            // head is the literal 0, rotated by a complex, then read back with real-part.
-            if ((IsExact(a) && IsZero(a)) || (IsExact(b) && IsZero(b)))
-            {
-                return 0L;
-            }
-
+            //was previously: an EXACT zero factor answered the exact integer 0, on the
+            // claim that "Guile answers EXACT 0 for a product with an exact zero" and that
+            // stencil.scm's arrow heads (the literal 0 rotated by a complex, read back
+            // with real-part) relied on it. MEASURED on the pinned 2.27.2 ("running Guile
+            // 3.0") on 2026-08-28: (* 0 1+2i) is 0.0+0.0i and (real-part (* 0 1+2i)) is
+            // 0.0 -- the product is computed, not short-circuited -- so stencil.scm has
+            // always run on 0.0 there. (* 0 1.5) is 0.0 on both sides and is the real
+            // branch below. Removed under the ruling that LilyScheme works like Guile
+            // wherever possible.
             ComplexNumber x = AsComplex(a);
             ComplexNumber y = AsComplex(b);
             return Complex(

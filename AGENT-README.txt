@@ -199,16 +199,14 @@ EMBEDDING HOOKS
         Null (the default) loads live. See THE EXPANSION CACHE.
 
     bool NarrowModuleImports { get; set; }
-        OPT-IN fidelity switch for Guile's import-side module privacy. Off (the
-        default), a use-modules WITHOUT #:select puts the WHOLE module on the
-        importer's use list, so visible scope is WIDER than Guile's and never
-        narrower. On, such a clause imports the module's public interface
-        instead, as Guile documents: only exported names arrive, through a LIVE
-        view that keeps growing with the module's exports and that answers the
-        module's own variable cells (so set! works through it). The switch is
-        consulted each time a use-modules clause is resolved, so set it BEFORE
-        loading the code it is meant to govern. #:select clauses and the implicit
-        core import behave identically either way.
+        TRUE BY DEFAULT since 2026-08-28: a use-modules WITHOUT #:select imports the
+        module's PUBLIC INTERFACE, as Guile documents, through a live view that
+        grows with the module's exports. Set it FALSE -- before loading anything it
+        should govern -- to get the WIDE import (the whole module, private names
+        included), which is what CodeBrix.LilyPort selects explicitly until its
+        corpus has been swept under the narrow default. #:select clauses and the
+        implicit core import behave identically either way. Both positions are
+        fenced by NarrowImportTests.
 
 RUNNING ON A BIG STACK
 ----------------------
@@ -643,7 +641,8 @@ not, and arithmetic narrows back through Normalize -- so NEVER test for `long'
 alone. Use SchemeNumber.IsInteger / ToBigInteger / ToDouble, which handle every
 representation including `int' (which primitives may produce).
 
-The COMPLEX parts are doubles, so a complex here is always inexact; Guile's
+The COMPLEX parts are doubles, so a complex here is always inexact and PRINTS as
+such (1.0+2.0i -- pitfall 50); Guile's
 exact complexes are not modelled. An EXACT ZERO imaginary part collapses to the
 real in the reader -- 1+0i IS the exact integer 1, while 1.0+0.0i stays complex
 -- and a product with an exact zero answers exact 0 whatever the other operand
@@ -767,6 +766,15 @@ This is what Scheme's enable-primitive-generic! does: it hangs a generic off the
 PRIMITIVE OBJECT itself, so a method added from one module is visible from every
 module that imports the core. See the pitfalls section -- getting this wrong is
 invisible from the defining module.
+
+DISPATCH ORDER IS GUILE'S (since 2026-08-28): arity first, then the PRIMITIVE, and
+only when the primitive's own type check fails does the call fall over to the
+attached generic -- SCM_WTA_DISPATCH_n. A method specialized on the primitive's own
+domain (say <integer> on max) is therefore NEVER consulted for integers, and a
+generic with no applicable method raises (goops-error #f "No applicable method
+for ~S in call ~S" (GENERIC CALL) ()). The four arithmetic operators, the five
+comparisons, max, min, gcd and lcm dispatch PAIRWISE, so the CALL in that error is
+the pair that failed: (+ 1 2 "x") reports (+ 3 "x"). See pitfalls 49-51.
 
 MODULES: SchemeModule, ModuleRegistry AND ModuleLoader
 ======================================================
@@ -1793,11 +1801,15 @@ why they are worth reading before you write code rather than after.
 
 EMBEDDING
 ---------
-1.  EVALUATING WITH THE WRONG EVALUATOR. Interpreter.Eval / EvalString /
-    LoadFile / LoadFileWithProgress run the CORE evaluator and do not expand
-    macros. Use TreeIlEvaluator.ExpandAndEval or SchemeBootstrap.LoadExpanded for
-    consumer code. The failure appears where the macro is USED, not where it is
-    defined.
+1.  EVALUATING WITH THE WRONG EVALUATOR. Interpreter.LoadFile and
+    LoadFileWithProgress run the CORE evaluator and do not expand macros: they are
+    the boot paths that load psyntax itself. Since 2026-08-28 Interpreter.Eval and
+    EvalString (and the Scheme `eval' / `eval-string') EXPAND once psyntax is
+    loaded, as Guile's do, and fall back to the core evaluator only before that --
+    the `(markup ...)' from (lily) through EvalString that used to fail as "Wrong
+    type to apply: #<syntax-transformer markup>" now works (EvalExpansionTests).
+    For a file, use SchemeBootstrap.LoadExpanded. A macro that still fails "where
+    it is USED, not where it is defined" means a core-evaluator path was taken.
 
 2.  NOT RUNNING ON A BIG STACK. psyntax overflows the CLR's default 1 MB stack
     while expanding. Wrap the work in Interpreter.RunWithLargeStack. The stack
@@ -1900,10 +1912,17 @@ MODULES
     agree; only srfi-43's fourth (fill) argument is out of reach. A module's OWN
     binding beats every import.
 
-20. THE DEFAULT IMPORT IS WIDER THAN GUILE'S. Without #:select, a use-modules
-    clause puts the WHOLE module on the use list, not its public interface, so
-    private names are visible. Interpreter.NarrowModuleImports = true closes it,
-    and MUST be set before the code it governs is loaded.
+20. THE IMPORT IS GUILE'S BY DEFAULT, AND THE WIDE IMPORT IS A CHOICE. Since
+    2026-08-28 Interpreter.NarrowModuleImports defaults to TRUE: a use-modules
+    without #:select imports the module's public interface only. Set it FALSE --
+    BEFORE the code it governs is loaded -- to put the WHOLE module on the use
+    list, private names included, which is what CodeBrix.LilyPort does explicitly
+    until its corpus is swept under the narrow default. //was previously: false
+    by default (the wide import), true as the opt-in Guile-exact position. The
+    wide import HID a real defect for the project's whole life: define-module
+    clause keywords spelled as keyword-like SYMBOLS (`:export', srfi-1's spelling)
+    were silently skipped, so srfi-1's export list went unrecorded -- found only
+    when the narrow import was first tried.
 
 21. AN ANONYMOUS MODULE IS NAMED LAZILY, AND THAT IS LOAD-BEARING. psyntax
     round-trips module identity BY NAME inside hygiene wraps. A macro imported
@@ -2076,6 +2095,79 @@ PORTS, FILES AND THE OUTSIDE WORLD
     BETWEEN the two do not see it. RECORDED DIVERGENCE, bounded; `guard' is
     unaffected because its prompt sits outside its handler.
 
+48. THE WRONG NUMBER OF ARGUMENTS IS AN ERROR ON EVERY PATH, since 2026-08-28.
+    Applying a procedure with too few or too many arguments raises Guile's
+    wrong-number-of-args in the VM's shape -- (#f "Wrong number of arguments to
+    ~A" (PROCEDURE) #f), so a report reads "Wrong number of arguments to
+    #<procedure unfold-repeats (types music)>". Before that date the Tree-IL
+    path (every psyntax-expanded procedure) bound a MISSING required parameter
+    to #<unspecified> and DROPPED surplus arguments, and the body ran anyway;
+    only the core evaluator's closures and primitives had ever checked. Found
+    through LilyPond: scores calling unfold-repeats with its pre-2.23 arity
+    engraved where 2.27.2 refuses the file. A case-lambda with no fitting
+    clause names ITSELF in the error, not its last arm; #:optional still
+    defaults to #f, a rest parameter still takes any count, and a #:key clause
+    has no positional ceiling (its tail is keyword/value pairs). Fenced by
+    WrongNumberOfArgumentsTests.cs.
+
+49. A PRIMITIVE GENERIC RUNS THE PRIMITIVE FIRST, since 2026-08-28. Arity is
+    checked, the primitive runs, and only its OWN type failure (a wrong-type-arg
+    whose subr is the primitive's name) falls over to the generic that
+    enable-primitive-generic! attached; no applicable method there is Guile's
+    (goops-error #f "No applicable method for ~S in call ~S" (#<<generic> + (2)>
+    (+ 3 "x")) ()) -- generic object, the failing PAIR for the pairwise operators,
+    EMPTY LIST data. //was previously: method-first with the primitive as the
+    fallback, which charged a method-selection pass to every arithmetic call and
+    surfaced a type failure as wrong-type-arg. MEASURED on the pinned 2.27.2:
+    (define-method (max (a <integer>) (b <integer>)) ...) leaves (max 1 2) = 2.
+    A primitive's arity error is the VM's shape too: (wrong-number-of-args #f
+    "Wrong number of arguments to ~A" (#<procedure abs (_)>) #f). Fenced by
+    PrimitiveGenericTests.cs.
+
+50. THE NUMERIC FAMILY RAISES GUILE'S POSITIONED wrong-type-arg, since 2026-08-28:
+    (NAME "Wrong type argument in position ~A: ~S" (POS VALUE) (VALUE)) -- a
+    TEMPLATE message, position and value as its arguments, the value again as the
+    data. Positions are PAIRWISE for + - * / < > <= >= max min gcd lcm logand
+    (the accumulator is position 1 of every later pair), and `=' names position 1
+    whichever side is bad. Guile's quirks are reproduced, not corrected: (* 1 "x")
+    and (* "x" 1) are "x" (exact 1 is the multiplicative identity, tested before
+    types); (< "x") is #t (one argument, unchecked); (> 1 2 "x") is #f (the first
+    false pair stops the scan); lognot reports itself as "logxor"; (ash 1 "x")
+    fails inside `<' as (< "x" 0); (expt "x" 2) fails inside `*' as (* "x" "x");
+    a radix or shift that is not an exact integer is the UNNAMED (wrong-type-arg
+    #f "Wrong type (expecting ~A): ~S" ("exact integer" v) (v)). quotient,
+    remainder, modulo, gcd, lcm, even? and odd? ACCEPT inexact integers ((gcd 4.0
+    2) is 2.0); the bitwise family wants EXACT ones. COMPLEX NUMBERS, same date:
+    both parts PRINT as inexact reals (1+2i reads back as 1.0+2.0i, +i is
+    0.0+1.0i); an EXACT zero imaginary part or polar angle is no complex at all
+    ((make-rectangular 1 0) is 1, (make-rectangular 1 0.0) is 1.0+0.0i); (* 0 z)
+    is the computed 0.0+0.0i, not an exact 0; sqrt of a negative real or of a
+    complex, and exp/log/sin/cos/tan/asin/acos/atan/expt of a complex, compute in
+    the complex plane (System.Numerics.Complex); zero? and = take a complex;
+    inexact->exact of a zero-imaginary complex is the exact real; and the ordered
+    comparisons, max, min, abs, the rounding family, positive?/negative?,
+    numerator/denominator and inexact->exact of a non-zero-imaginary complex
+    REFUSE a complex with the positioned error. //was previously: subr
+    "arithmetic" / "comparison", unpositioned, #f data; a dozen primitives let a
+    raw .NET ArgumentException escape to the host (a complex to any of them, too);
+    floor, round, inexact->exact and numerator answered a non-number unchanged;
+    complexes printed as 1+2i and (sqrt -4) was +nan.0. Fenced, every row
+    measured on the oracle, by GuileNumericErrorShapeTests.cs.
+
+51. define-method ON A NAME THAT HOLDS A PLAIN PROCEDURE IS REFUSED, since
+    2026-08-28: (goops-error #f "~S is not a valid generic function" (proc) ()),
+    which is what add-method! on a non-generic-capable <procedure> raises in
+    GOOPS. //was previously: the procedure quietly became the new generic's
+    Fallback -- written for LilyPond's operators.scm extending `+' and `*',
+    which are generic-capable PRIMITIVES and are extended in place instead. A
+    GenericFunction.Fallback now arises only from Enable on a primitive.
+
+52. eval AND eval-string EXPAND. See pitfall 1: since 2026-08-28 Interpreter.Eval,
+    Interpreter.EvalString and the Scheme `eval' / `eval-string' go through
+    psyntax once it is loaded (ControlPrimitives.EvalAny), so a macro defined by
+    one eval-string is usable by the next and a bare (markup ...) evaluates.
+    LoadFile / LoadFileWithProgress stay on the core evaluator on purpose.
+
 WHAT THIS PACKAGE DOES NOT DO
 =============================
 It is not a general-purpose Guile replacement. It implements the subset of Guile
@@ -2141,6 +2233,23 @@ Files worth reading first, by what you are trying to do
                                 including a deliberately bare cast reaching the
                                 translation net, and a primitive raising its own
                                 SchemeThrow
+    WrongNumberOfArgumentsTests.cs
+                                arity on the Tree-IL path: too few and too many
+                                arguments raise wrong-number-of-args in the VM's
+                                shape, the report text character for character,
+                                case-lambda naming itself, and #:optional / rest /
+                                #:key clauses unaffected
+    GuileNumericErrorShapeTests.cs
+                                the numeric family's wrong-type-arg in Guile's
+                                template shape at Guile's positions (every row
+                                measured on the oracle), the reproduced quirks
+                                ((* 1 "x"), (< "x"), short-circuit, expt via *),
+                                inexact integers accepted where Guile accepts them,
+                                and no host exception escaping any numeric site
+    EvalExpansionTests.cs       eval / eval-string / Interpreter.Eval / EvalString
+                                macro-expand once psyntax is loaded: a macro
+                                defined by one eval-string is used by the next,
+                                and the (lily)-shaped explicit-module case
     ExpansionCacheTests.cs      wiring the cache: record, serialize, replay,
                                 per-interpreter deserialization, identity-preserving
                                 round-trips, and corruption reading as a MISS

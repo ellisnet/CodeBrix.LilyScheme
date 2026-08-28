@@ -249,7 +249,7 @@ public static class SchemeBootstrap
         {
             Symbol.Intern("system"), Symbol.Intern("vm"), Symbol.Intern("program"),
         }));
-        module.Define(Symbol.Intern("program?"), new Primitive("program?", 1, 1, a => false));
+        module.DefinePublic(Symbol.Intern("program?"), new Primitive("program?", 1, 1, a => false));
     }
 
     /// <summary>
@@ -269,12 +269,12 @@ public static class SchemeBootstrap
         {
             Symbol.Intern("ice-9"), Symbol.Intern("iconv"),
         }));
-        module.Define(
+        module.DefinePublic(
             Symbol.Intern("string->bytevector"),
             new Primitive("string->bytevector", 2, 3, a =>
                 ResolveEncoding(TextOf(a[1], "string->bytevector"))
                     .GetBytes(TextOf(a[0], "string->bytevector"))));
-        module.Define(
+        module.DefinePublic(
             Symbol.Intern("bytevector->string"),
             new Primitive("bytevector->string", 2, 3, a =>
                 new MutableString(
@@ -352,7 +352,7 @@ public static class SchemeBootstrap
             Symbol.Intern("ice-9"), Symbol.Intern("popen"),
         }));
 
-        module.Define(
+        module.DefinePublic(
             Symbol.Intern("open-pipe*"),
             new Primitive("open-pipe*", 2, -1, a =>
             {
@@ -367,7 +367,7 @@ public static class SchemeBootstrap
                 return openPipe(program, arguments, mode);
             }));
 
-        module.Define(
+        module.DefinePublic(
             Symbol.Intern("open-pipe"),
             new Primitive("open-pipe", 2, 2, a =>
                 openPipe(
@@ -375,7 +375,7 @@ public static class SchemeBootstrap
                     new[] { Primitives.PosixPrimitives.ShellCommandFlag(), TextOf(a[0], "open-pipe") },
                     TextOf(a[1], "open-pipe"))));
 
-        module.Define(
+        module.DefinePublic(
             Symbol.Intern("open-input-pipe"),
             new Primitive("open-input-pipe", 1, 1, a =>
                 openPipe(
@@ -383,7 +383,7 @@ public static class SchemeBootstrap
                     new[] { Primitives.PosixPrimitives.ShellCommandFlag(), TextOf(a[0], "open-input-pipe") },
                     "r")));
 
-        module.Define(
+        module.DefinePublic(
             Symbol.Intern("open-output-pipe"),
             new Primitive("open-output-pipe", 1, 1, a =>
                 openPipe(
@@ -391,7 +391,7 @@ public static class SchemeBootstrap
                     new[] { Primitives.PosixPrimitives.ShellCommandFlag(), TextOf(a[0], "open-output-pipe") },
                     "w")));
 
-        module.Define(
+        module.DefinePublic(
             Symbol.Intern("open-input-output-pipe"),
             new Primitive("open-input-output-pipe", 1, 1, a =>
                 throw new SchemeThrow(
@@ -402,7 +402,7 @@ public static class SchemeBootstrap
                         false,
                         false))));
 
-        module.Define(
+        module.DefinePublic(
             Symbol.Intern("close-pipe"),
             new Primitive("close-pipe", 1, 1, a =>
             {

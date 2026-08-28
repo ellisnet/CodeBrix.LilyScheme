@@ -106,6 +106,25 @@ public sealed class SchemeModule
     /// </summary>
     public SchemeModule PublicInterface { get; set; }
 
+    /// <summary>
+    /// Defines a name AND exports it — what a module provided from C# needs for every
+    /// name Guile's own module of that name exports, so that the default (narrow) import
+    /// delivers it. A <c>Define</c> alone is a PRIVATE binding under Guile's rules.
+    /// <para>
+    /// //was previously: the shim modules ((ice-9 soft-ports), (ice-9 iconv), (ice-9 popen),
+    /// (ice-9 unicode), (system vm program)) only <c>Define</c>d, and the wide import hid
+    /// it for the project's whole life; the narrow default of 2026-08-28 found all five at
+    /// once, as <c>unbound-variable</c> for <c>make-soft-port</c> and its kin.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The name to bind and export.</param>
+    /// <param name="value">The value to bind.</param>
+    public void DefinePublic(Symbol name, object value)
+    {
+        Define(name, value);
+        Export(name);
+    }
+
     /// <summary>Records that this module exports a name.</summary>
     /// <param name="name">The name to export.</param>
     public void Export(Symbol name)
