@@ -121,8 +121,11 @@ public class ReadErrorTests
                 + " (lambda k (caddr k)))");
 
             //Assert
-            result.Should().Be(
-                "\"" + path + ":1:5: unexpected end of input while searching for: ~A\"");
+            // Printer.WriteString rather than hand-quoting: the result is the WRITTEN form
+            // of the message, so a Windows path's backslashes come back doubled. On Linux
+            // and macOS a path has nothing to escape and this is the same text as before.
+            result.Should().Be(Printer.WriteString(
+                path + ":1:5: unexpected end of input while searching for: ~A"));
         }
         finally
         {
@@ -283,7 +286,9 @@ public class ReadErrorTests
                 + " (port-filename f))");
 
             //Assert
-            result.Should().Be("(#f #f \"" + path + "\")");
+            // `quoted` is the written form of the path -- the same escaping going into the
+            // source and coming back out of the printer, so this holds on every platform.
+            result.Should().Be("(#f #f " + quoted + ")");
         }
         finally
         {
