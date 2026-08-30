@@ -25,6 +25,8 @@ public sealed class SchemeInputPort
     private readonly SchemeReader _reader;
     private readonly TextReader _stream;
     private readonly Stack<char> _pushback = new Stack<char>();
+    private long _streamLine;
+    private long _streamColumn;
 
     /// <summary>Initializes an input port.</summary>
     /// <param name="text">The text to read from.</param>
@@ -56,6 +58,53 @@ public sealed class SchemeInputPort
 
     /// <summary>Gets the name reported for this port.</summary>
     public string FileName { get; }
+
+    /// <summary>
+    /// Gets or sets the line this port reports, counting from ZERO as Guile's
+    /// <c>port-line</c> does.
+    /// </summary>
+    /// <remarks>
+    /// For a string-backed port these are the READER's own counters, not a second set
+    /// kept alongside — which is the point. A datum's <c>source-properties</c> are the
+    /// port's line and column at the datum's first character, so a port whose position
+    /// can be READ but not MOVED would answer plausibly and do nothing: LilyPond's
+    /// parser-ly-from-scheme.scm sets both on a second port over the same text precisely
+    /// so that <c>#{ … #}</c> embedded Scheme records the location of its real source.
+    /// A stream-backed port keeps its own counters, since it has no reader.
+    /// </remarks>
+    public long Line
+    {
+        get => _reader != null ? _reader.PortLine : _streamLine;
+        set
+        {
+            if (_reader != null)
+            {
+                _reader.PortLine = (int)value;
+            }
+            else
+            {
+                _streamLine = value;
+            }
+        }
+    }
+
+    /// <summary>Gets or sets the column this port reports.</summary>
+    /// <remarks>See <see cref="Line"/>.</remarks>
+    public long Column
+    {
+        get => _reader != null ? _reader.PortColumn : _streamColumn;
+        set
+        {
+            if (_reader != null)
+            {
+                _reader.PortColumn = (int)value;
+            }
+            else
+            {
+                _streamColumn = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets a value indicating whether this port reads a FILE.
@@ -143,15 +192,24 @@ public sealed class SchemeInputPort
 
         if (_pushback.Count > 0)
         {
-            return _pushback.Pop();
+            char pushed = _pushback.Pop();
+            AdvancePosition(pushed);
+            return pushed;
         }
 
         if (_stream != null)
         {
             int c = _stream.Read();
-            return c < 0 ? (char?)null : (char)c;
+            if (c < 0)
+            {
+                return null;
+            }
+
+            AdvancePosition((char)c);
+            return (char)c;
         }
 
+        // ReadCharacterRaw advances the reader's own counters, which ARE this port's.
         return _reader.IsAtEnd ? (char?)null : _reader.ReadCharacterRaw();
     }
 
@@ -187,7 +245,39 @@ public sealed class SchemeInputPort
     /// <c>scm_ungetc</c> does.
     /// </summary>
     /// <param name="value">The character to push back.</param>
-    public void PushbackCharacter(char value) => _pushback.Push(value);
+    public void PushbackCharacter(char value)
+    {
+        _pushback.Push(value);
+        RetreatPosition(value);
+    }
+
+    private void AdvancePosition(char value)
+    {
+        if (_reader != null)
+        {
+            // The reader owns the counters; a pushed-back character re-read has to move
+            // them again, because pushing it back moved them the other way.
+            long line = _reader.PortLine;
+            long column = _reader.PortColumn;
+            PortPosition.Advance(value, ref line, ref column);
+            _reader.PortLine = (int)line;
+            _reader.PortColumn = (int)column;
+            return;
+        }
+
+        PortPosition.Advance(value, ref _streamLine, ref _streamColumn);
+    }
+
+    private void RetreatPosition(char value)
+    {
+        if (_reader != null)
+        {
+            _reader.RetreatPosition(value);
+            return;
+        }
+
+        PortPosition.Retreat(value, ref _streamLine, ref _streamColumn);
+    }
 
     /// <summary>Returns the external representation.</summary>
     /// <returns>A description including the port's file name.</returns>
@@ -197,6 +287,8 @@ public sealed class SchemeInputPort
 /// <summary>An output port accumulating text, backing <c>open-output-string</c>.</summary>
 public sealed class SchemeOutputPort
 {
+    private TextWriter _writer;
+
     /// <summary>Initializes an output port over a writer.</summary>
     /// <param name="writer">The sink for written text.</param>
     public SchemeOutputPort(TextWriter writer)
@@ -209,8 +301,39 @@ public sealed class SchemeOutputPort
     /// SETTABLE for one reason: <c>set-port-encoding!</c>. Guile changes a port's codec
     /// in place, and .NET's writers bind their encoding at construction, so honouring
     /// that call means putting a differently-encoded writer behind the same port object.
+    /// <para>
+    /// What is assigned is WRAPPED for position tracking (see
+    /// <see cref="ColumnTrackingWriter"/>) unless it already tracks, so that
+    /// <c>port-line</c> and <c>port-column</c> answer for every port and not only for the
+    /// two kinds that happened to be readable after the fact. Use
+    /// <see cref="InnerWriter"/> where the concrete sink is what is wanted.
+    /// </para>
     /// </remarks>
-    public TextWriter Writer { get; set; }
+    public TextWriter Writer
+    {
+        get => _writer;
+        set
+        {
+            TextWriter replacement = ColumnTrackingWriter.Wrap(value);
+
+            // set-port-encoding! swaps the sink underneath a port that GOES ON EXISTING,
+            // so its position carries over; Guile changes the codec, not the place.
+            if (_writer is ColumnTrackingWriter previous
+                && replacement is ColumnTrackingWriter tracking)
+            {
+                tracking.Line = previous.Line;
+                tracking.Column = previous.Column;
+            }
+
+            _writer = replacement;
+        }
+    }
+
+    /// <summary>
+    /// Gets the sink underneath any tracking wrapper — the <see cref="StringWriter"/> a
+    /// string port accumulates into, for instance.
+    /// </summary>
+    public TextWriter InnerWriter => ColumnTrackingWriter.Unwrap(_writer);
 
     /// <summary>
     /// Gets or sets the file this port writes, or <see langword="null"/> when it is not a
@@ -339,9 +462,9 @@ public static class PortPrimitives
         interpreter.DefinePrimitive("simple-format", 2, -1, a => SimpleFormat(interpreter, a));
         interpreter.DefinePrimitive("format", 2, -1, a => SimpleFormat(interpreter, a));
 
-        interpreter.DefinePrimitive("current-output-port", 0, 0, a => new SchemeOutputPort(interpreter.OutputWriter));
-        interpreter.DefinePrimitive("current-error-port", 0, 0, a => new SchemeOutputPort(interpreter.ErrorWriter));
-        interpreter.DefinePrimitive("current-warning-port", 0, 0, a => new SchemeOutputPort(interpreter.ErrorWriter));
+        interpreter.DefinePrimitive("current-output-port", 0, 0, a => new SchemeOutputPort(interpreter.TrackedOutputWriter()));
+        interpreter.DefinePrimitive("current-error-port", 0, 0, a => new SchemeOutputPort(interpreter.TrackedErrorWriter()));
+        interpreter.DefinePrimitive("current-warning-port", 0, 0, a => new SchemeOutputPort(interpreter.TrackedErrorWriter()));
         interpreter.DefinePrimitive("set-current-warning-port", 1, 1, a => Unspecified.Instance);
         interpreter.DefinePrimitive("port?", 1, 1, a => a[0] is SchemeInputPort || a[0] is SchemeOutputPort);
         interpreter.DefinePrimitive("output-port?", 1, 1, a => a[0] is SchemeOutputPort);
@@ -400,7 +523,7 @@ public static class PortPrimitives
                 return new MutableString(result);
             }
 
-            interpreter.OutputWriter.Write(result);
+            interpreter.TrackedOutputWriter().Write(result);
             return Unspecified.Instance;
         }
 
@@ -410,7 +533,7 @@ public static class PortPrimitives
             return Unspecified.Instance;
         }
 
-        interpreter.OutputWriter.Write(result);
+        interpreter.TrackedOutputWriter().Write(result);
         return Unspecified.Instance;
     }
 
@@ -497,7 +620,10 @@ public static class PortPrimitives
         });
 
         interpreter.DefinePrimitive("open-input-string", 1, 1, a =>
-            new SchemeInputPort(StringPrimitives.Text(a[0], "open-input-string"), "<string>"));
+            // NO NAME, measured: the oracle answers #f to (port-filename
+            // (open-input-string ...)) and puts #f in a datum's source-properties, and
+            // its read errors say "#<unknown port>" rather than naming the port.
+            new SchemeInputPort(StringPrimitives.Text(a[0], "open-input-string"), null));
 
         // (call-with-port port proc) -- ice-9/ports.scm. Guile threads MULTIPLE VALUES
         // back out through call-with-values; a single value is the only case reached
@@ -772,7 +898,7 @@ public static class PortPrimitives
         {
             switch (a[0])
             {
-                case SchemeInputPort input:
+                case SchemeInputPort input when input.FileName != null:
                     return new MutableString(input.FileName);
                 case SchemeOutputPort output when output.IsFilePort:
                     return new MutableString(output.FileName);
@@ -1159,6 +1285,6 @@ public static class PortPrimitives
             return port.Writer;
         }
 
-        return interpreter.OutputWriter;
+        return interpreter.TrackedOutputWriter();
     }
 }

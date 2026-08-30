@@ -818,8 +818,10 @@ public static class GuileCorePrimitives
 
     private static void InstallStringPorts(Interpreter interpreter)
     {
-        // Guile's ports track their own position; the documentation generators read it
-        // back to decide when to wrap a line.
+        // Guile's ports track their own position and EVERY port answers for it -- input
+        // as well as output, a console port and a file port as much as a string port. The counters live on the
+        // writer (ColumnTrackingWriter, or a soft port's own), because current-output-port
+        // hands back a fresh port object each call while the writer behind it is shared.
         interpreter.DefinePrimitive("port-column", 1, 1, a =>
         {
             if (a[0] is SchemeOutputPort port)
@@ -829,12 +831,15 @@ public static class GuileCorePrimitives
                     return soft.Column;
                 }
 
-                if (port.Writer is System.IO.StringWriter writer)
+                if (port.Writer is ColumnTrackingWriter tracking)
                 {
-                    string text = writer.ToString();
-                    int newline = text.LastIndexOf('\n');
-                    return (long)(text.Length - newline - 1);
+                    return tracking.Column;
                 }
+            }
+
+            if (a[0] is SchemeInputPort input)
+            {
+                return input.Column;
             }
 
             return 0L;
@@ -849,31 +854,55 @@ public static class GuileCorePrimitives
                     return soft.Line;
                 }
 
-                if (port.Writer is System.IO.StringWriter writer)
+                if (port.Writer is ColumnTrackingWriter tracking)
                 {
-                    long lines = 0;
-                    foreach (char c in writer.ToString())
-                    {
-                        if (c == '\n')
-                        {
-                            lines++;
-                        }
-                    }
-
-                    return lines;
+                    return tracking.Line;
                 }
+            }
+
+            if (a[0] is SchemeInputPort input)
+            {
+                return input.Line;
             }
 
             return 0L;
         });
 
-        interpreter.DefinePrimitive("set-port-column!", 2, 2, a => Unspecified.Instance);
-        interpreter.DefinePrimitive("set-port-line!", 2, 2, a => Unspecified.Instance);
+        // Real setters, not no-ops: on the oracle (set-port-column! p 42) makes the next
+        // character land at column 43, and pretty-print's per-line-prefix handling leans
+        // on the port's position being writable.
+        interpreter.DefinePrimitive("set-port-column!", 2, 2, a =>
+        {
+            if (a[0] is SchemeOutputPort port && port.Writer is ColumnTrackingWriter tracking)
+            {
+                tracking.Column = ToLong(a[1]);
+            }
+            else if (a[0] is SchemeInputPort input)
+            {
+                input.Column = ToLong(a[1]);
+            }
+
+            return Unspecified.Instance;
+        });
+
+        interpreter.DefinePrimitive("set-port-line!", 2, 2, a =>
+        {
+            if (a[0] is SchemeOutputPort port && port.Writer is ColumnTrackingWriter tracking)
+            {
+                tracking.Line = ToLong(a[1]);
+            }
+            else if (a[0] is SchemeInputPort input)
+            {
+                input.Line = ToLong(a[1]);
+            }
+
+            return Unspecified.Instance;
+        });
         interpreter.DefinePrimitive("set-port-filename!", 2, 2, a => Unspecified.Instance);
         interpreter.DefinePrimitive("drain-input", 1, 1, a => new MutableString(string.Empty));
 
         interpreter.DefinePrimitive("ftell", 1, 1, a =>
-            a[0] is SchemeOutputPort port && port.Writer is System.IO.StringWriter writer
+            a[0] is SchemeOutputPort port && port.InnerWriter is System.IO.StringWriter writer
                 ? (long)writer.ToString().Length
                 : 0L);
 
@@ -881,7 +910,7 @@ public static class GuileCorePrimitives
             new SchemeOutputPort(new System.IO.StringWriter()));
 
         interpreter.DefinePrimitive("get-output-string", 1, 1, a =>
-            a[0] is SchemeOutputPort port && port.Writer is System.IO.StringWriter writer
+            a[0] is SchemeOutputPort port && port.InnerWriter is System.IO.StringWriter writer
                 ? new MutableString(writer.ToString())
                 : new MutableString(string.Empty));
 
@@ -914,7 +943,7 @@ public static class GuileCorePrimitives
         interpreter.DefinePrimitive("call-with-input-string", 2, 2, a =>
             interpreter.Evaluator.Apply(
                 a[1],
-                new object[] { new SchemeInputPort(StringPrimitives.Text(a[0], "call-with-input-string"), "<string>") }));
+                new object[] { new SchemeInputPort(StringPrimitives.Text(a[0], "call-with-input-string"), null) }));
     }
 
     private static void InstallRecords(Interpreter interpreter)

@@ -274,7 +274,11 @@ public static class Printer
                 builder.Append("#nil");
                 return;
             case Symbol s:
-                builder.Append(s.Name);
+                // NOT the bare name: a symbol whose spelling would not READ BACK as
+                // itself is written in Guile's extended syntax, #{...}#. Applies to
+                // display as well as write -- measured, (display (string->symbol "a b"))
+                // prints #{a b}# on the oracle.
+                builder.Append(WriteSymbol(s.Name));
                 return;
             case MutableString ms:
                 if (quoteStrings)
@@ -351,6 +355,23 @@ public static class Printer
                 builder.Append(_programPrintLatched ? ProgramFallback(procedure) : RenderProgram(procedure));
                 return;
 
+            case byte[] bytes:
+                // A bytevector, which used to reach the fallback below and print as the
+                // .NET type name "System.Byte[]".
+                builder.Append("#vu8(");
+                for (int i = 0; i < bytes.Length; i++)
+                {
+                    if (i > 0)
+                    {
+                        builder.Append(' ');
+                    }
+
+                    builder.Append(bytes[i].ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+
+                builder.Append(')');
+                return;
+
             default:
                 if (Numeric.SchemeNumber.IsNumber(value))
                 {
@@ -372,6 +393,84 @@ public static class Printer
         }
     }
 
+    /// <summary>
+    /// Writes a symbol's name, in Guile's <c>#{...}#</c> extended syntax when the bare
+    /// spelling would not read back as the same symbol.
+    /// </summary>
+    /// <param name="name">The symbol's name.</param>
+    /// <returns>The external representation.</returns>
+    /// <remarks>
+    /// The rules were MEASURED against the pinned oracle one character at a time, not
+    /// derived. A name needs the extended syntax when it is EMPTY, when it is exactly
+    /// <c>.</c>, when it starts with a digit (<c>1+</c> and <c>1abc</c> both qualify) or
+    /// otherwise reads as a number (<c>+1</c>, <c>-1</c>, <c>1.5</c>), when it starts with
+    /// <c>'</c>, <c>,</c> or <c>`</c> — which are reader syntax only at the START, so
+    /// <c>a'b</c> needs nothing — or when it contains a double quote, <c>#</c>, a paren,
+    /// a bracket, a brace, a semicolon, whitespace or a control character.
+    /// <para>
+    /// INSIDE the braces only some of those are escaped, and the split is upstream's, not
+    /// a tidy rule: the six bracketing characters and the control characters become
+    /// <c>\xN;</c> with minimal lower-case hex (<c>\x9;</c>, not <c>\x09;</c>), while a
+    /// double quote, a <c>#</c>, a semicolon, a space and even a BACKSLASH are written
+    /// literally. The backslash is upstream's own round-trip hazard and is reproduced.
+    /// </para>
+    /// </remarks>
+    private static string WriteSymbol(string name)
+    {
+        if (!NeedsExtendedSyntax(name))
+        {
+            return name;
+        }
+
+        System.Text.StringBuilder builder = new System.Text.StringBuilder("#{");
+        foreach (char c in name)
+        {
+            if (c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}'
+                || char.IsControl(c))
+            {
+                builder.Append("\\x")
+                    .Append(((int)c).ToString("x", System.Globalization.CultureInfo.InvariantCulture))
+                    .Append(';');
+            }
+            else
+            {
+                builder.Append(c);
+            }
+        }
+
+        return builder.Append("}#").ToString();
+    }
+
+    private static bool NeedsExtendedSyntax(string name)
+    {
+        if (name.Length == 0 || name == ".")
+        {
+            return true;
+        }
+
+        if (char.IsDigit(name[0]) || name[0] == '\'' || name[0] == ',' || name[0] == '`')
+        {
+            return true;
+        }
+
+        if (Reader.SchemeReader.ParseNumber(name) != null)
+        {
+            return true;
+        }
+
+        foreach (char c in name)
+        {
+            if (c == '"' || c == '#' || c == '(' || c == ')' || c == ';'
+                || c == '[' || c == ']' || c == '{' || c == '}'
+                || char.IsWhiteSpace(c) || char.IsControl(c))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static void RenderArray(System.Text.StringBuilder builder, SchemeArray array, bool quoteStrings, int depth)
     {
         if (array.IsShared)
@@ -382,7 +481,6 @@ public static class Printer
             return;
         }
 
-        builder.Append('#').Append(array.Rank);
         bool anyLowerBound = false;
         foreach (int lower in array.LowerBounds)
         {
@@ -392,12 +490,31 @@ public static class Printer
             }
         }
 
+        // The rank digit is OMITTED for an ordinary rank-1 array, which upstream writes
+        // exactly like a vector: #1(a b) reads and prints back as #(a b). It reappears
+        // as soon as the array carries a lower bound (#1@1(a b)), and every other rank
+        // always shows it -- all measured.
+        builder.Append('#');
+        if (array.Rank != 1 || anyLowerBound)
+        {
+            builder.Append(array.Rank);
+        }
+
         if (anyLowerBound)
         {
             foreach (int lower in array.LowerBounds)
             {
                 builder.Append('@').Append(lower);
             }
+        }
+
+        if (array.Rank == 0)
+        {
+            // No dimension to walk: a rank-0 array holds exactly one element.
+            builder.Append('(');
+            RenderInto(builder, array.Storage[0], quoteStrings, depth + 1);
+            builder.Append(')');
+            return;
         }
 
         int offset = 0;

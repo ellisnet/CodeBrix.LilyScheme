@@ -116,7 +116,11 @@ public static class SourceProperties
             // refuses it at record time rather than writing something it cannot read
             // back, so the whole boot cache silently stops recording.
             return Pair.List(
-                new Pair(FileNameSymbol, new MutableString(location.FileName)),
+                new Pair(
+                    FileNameSymbol,
+                    location.FileName == null
+                        ? (object)false
+                        : new MutableString(location.FileName)),
                 new Pair(LineSymbol, (long)location.Line),
                 new Pair(ColumnSymbol, (long)location.Column));
         }

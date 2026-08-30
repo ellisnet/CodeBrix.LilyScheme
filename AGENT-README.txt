@@ -1044,7 +1044,8 @@ and the total, and the ORIGINAL failure is the InnerException. Catch SchemeThrow
 first if you want the structured error, then SchemeEvaluationException for the
 "which form of which file" context.
 
-SchemeReaderException is a syntax error in the source text -- it comes out of
+SchemeReaderException is a syntax error in the source text -- a read-error
+condition, catchable from Scheme as well (pitfall 54). It comes out of
 SchemeReader.ReadAll before anything is evaluated.
 
 PromptAbort carries an abort-to-prompt out to the matching call-with-prompt.
@@ -2044,8 +2045,13 @@ PORTS, FILES AND THE OUTSIDE WORLD
     and never both.
 
 38. file-port? IS NOT "HAS A NAME". It asks whether the port's implementation is
-    the FILE one; a string port carries the name <string> in Guile too, so
-    answering by name takes the wrong branch.
+    the FILE one, so answering by name takes the wrong branch. ⚠ The parenthetical
+    that stood here -- "a string port carries the name <string> in Guile too" --
+    was REFUTED by measurement on 2026-08-30 and the behaviour it described is now
+    gone: a string port has NO name, port-filename answers #f, its datums record
+    #f as their source-properties filename, and its read errors say
+    "#<unknown port>". A FILE port still names itself, which is what makes
+    file-port? and "has a name" look alike; they are still not the same question.
 
 39. close-port DISPOSES A FILE PORT'S WRITER, not merely flushes it -- but the
     current output and error ports are deliberately NOT disposed by it, because
@@ -2168,6 +2174,116 @@ PORTS, FILES AND THE OUTSIDE WORLD
     one eval-string is usable by the next and a bare (markup ...) evaluates.
     LoadFile / LoadFileWithProgress stay on the core evaluator on purpose.
 
+53. EVERY OUTPUT PORT TRACKS ITS LINE AND COLUMN, since 2026-08-30, and the rules
+    are not "one character, one column". port-column used to answer for exactly two
+    kinds of port -- a soft port, which keeps its own counters, and a string port,
+    whose accumulated text could be re-read -- and returned a flat 0 for every
+    other, the process's own output included. That single 0 broke
+    (ice-9 pretty-print) outright: its `indent' emits a newline when the target
+    column is BEHIND the current one and spaces otherwise, and `pp-list' passes
+    (port-column port) itself as the target, so at zero it took neither branch --
+    no newline, and (spaces 0) writes nothing -- and every separator between list
+    items DISAPPEARED. display-scheme-music printed
+    (make-music'SequentialMusic'elements(list ...)) on one unreadable line.
+    ColumnTrackingWriter now sits in front of any writer that does not already
+    track (SoftPortWriter keeps its own, deliberately updated on entry to the port
+    rather than on flush -- pitfall 41). The counters live on the WRITER and not on
+    SchemeOutputPort because current-output-port hands back a FRESH port object
+    every call while the writer behind it is the shared thing; counters on the port
+    would restart at zero each time it was asked for. Two consequences worth
+    knowing: anything wanting the concrete sink underneath -- get-output-string and
+    ftell want the StringWriter -- must go through SchemeOutputPort.InnerWriter or
+    it finds the wrapper and answers empty; and set-port-column! / set-port-line!
+    are REAL SETTERS now rather than the no-ops they were, because on the oracle
+    (set-port-column! p 42) makes the next character land at 43.
+    THE UPDATE RULES, every one MEASURED on the pinned 2.27.2 rather than read off
+    Guile's source: a newline advances the line and zeroes the column; a CARRIAGE
+    RETURN zeroes the column WITHOUT advancing the line; a TAB advances to the next
+    multiple of eight (columns 0, 1 and 7 all become 8; 8 and 9 become 16); a
+    BACKSPACE retreats one but never below zero; an ALARM advances nothing; a form
+    feed and a vertical tab are ordinary characters; and a column counts CODE
+    POINTS, so two astral characters make column 2 and not 4. Fenced by
+    PortPositionTests, whose expectations are all oracle readings and which fails
+    8 of its 10 cases with the change reverted.
+    INPUT PORTS TRACK TOO, since the same day, and this is the half that reaches
+    beyond printing. A datum's source-properties ARE the port's line and column at
+    its first character, so the counters decide where every diagnostic points. Three
+    things follow. (1) port-line / port-column answer for an input port, from the
+    READER's own counters rather than a second set kept alongside -- a port whose
+    position could be read but not moved would answer plausibly and do nothing.
+    (2) set-port-line! / set-port-column! on an input port MOVE WHERE THE NEXT DATUM
+    IS RECORDED, which is the whole point: LilyPond's parser-ly-from-scheme.scm
+    synchronises a second port over the same text with exactly that pair so that
+    #{ ... #} embedded Scheme carries the location of its real source, and with both
+    calls no-ops the sync did nothing at all. (3) THE READER NOW COUNTS A TAB TO THE
+    TAB STOP, so a source column on a tab-indented line changed: "\t(x)" records
+    column 8, exactly as eight spaces do, where it used to record 1. peek-char does
+    not advance, and unread-char retreats -- a newline taking the LINE back and
+    leaving the column alone, a tab simply decrementing, both stopping at zero.
+    ⚠ CONSEQUENCE FOR CONSUMERS: (3) and (2) change SOURCE LOCATIONS, so
+    CodeBrix.LilyPort must take this as a pin bump with its full battery, not with
+    the calibrated pin-bump bar -- #{ #} locations and any tab-indented input can
+    move. Nothing in LilyPort's graded reference diagnostics carried the old values,
+    but that is an argument for running the battery, not for skipping it.
+
+54. A SYNTAX ERROR IS A read-error CONDITION, since 2026-08-30, and the reader is
+    as STRICT as Guile's. It used to throw a plain .NET exception that
+    (catch #t ...) went straight past, so no Scheme code could recover from a bad
+    datum; SchemeReaderException now DERIVES from SchemeThrow, so it is caught by
+    (catch 'read-error ...) while staying the same type a C# host catches. The
+    condition is Guile's own shape --
+      (read-error #f "NAME:LINE:COLUMN: text ~A" (args) #f)
+    -- with NO subr, the position folded into the message TEXT, and the format
+    arguments kept BESIDE it rather than substituted in. NAME is the port's file
+    name or "#<unknown port>"; LINE and COLUMN count from ONE, which the port
+    itself does not (port-line and port-column count from zero, and libguile adds
+    one for the message: reading ")" leaves the port at column 1 and the message
+    says 1:2). Every message string is upstream's verbatim, MEASURED one input at
+    a time, and its inconsistencies are reproduced rather than tidied: #z reports
+    "Unknown # object" and #d1x2 reports "unknown # object", and "unknown
+    character name ~a" takes a lower-case directive where its neighbours take ~S.
+    ⚠ FOUR THINGS THE READER USED TO ACCEPT AND NOW REFUSES, each measured against
+    the oracle, which refuses them too: an unknown string escape ("\q" read as
+    "q", losing the backslash silently); an unterminated #| ... |# comment (read
+    as end of input); a mismatched close paren ("(a b]" closed the list anyway);
+    and an unknown character name (#\nosuchchar answered #\n, the first letter --
+    a silently WRONG character, the worst of the four). A consumer whose input the
+    ORACLE accepts is unaffected, since the port is now strict in exactly the
+    places upstream is.
+    ⚠ AND THREE PLACES LET A RAW .NET EXCEPTION OUT of the reader, all of them
+    int.Parse over whatever had been collected without validating it: "\x" (which
+    collected the closing quote), #\xzz, and the same path for \u / \U. They raise
+    read-errors now. Fenced by ReadErrorTests, whose eleven Scheme-level cases all
+    fail with the change reverted and whose twelfth does not compile against the
+    old surface.
+
+55. A VALUE'S EXTERNAL REPRESENTATION READS BACK, since 2026-08-30, in three places
+    where it did not. (a) A BYTEVECTOR wrote as "System.Byte[]" -- a .NET type name
+    in Scheme output; it writes #vu8(1 2) now. (b) A SYMBOL wrote its bare name, so
+    the symbol . wrote as . and a symbol containing a space wrote as though it were
+    two; names that would not read back now use Guile's #{...}# syntax. (c) ARRAYS
+    refused rank ZERO, which upstream reads (#0(a) has array-rank 0 and is indexed
+    by NO subscripts, so array-ref takes one argument), printed a rank-1 array with
+    a rank digit upstream omits (#1(a b) writes as #(a b), but #1@1(a b) keeps it),
+    and reported a ragged literal as a read-error where upstream raises a
+    misc-error -- it finds that while BUILDING the array, not while reading it.
+    THE SYMBOL RULES, measured from a character-by-character table rather than
+    derived. Extended syntax is needed when the name is EMPTY, is exactly ".",
+    starts with a DIGIT (1+ and 1abc both qualify) or otherwise reads as a NUMBER
+    (+1, -1, 1.5), starts with ' , or ` -- reader syntax only at the START, so a'b
+    needs nothing -- or contains " # ( ) ; [ ] { } whitespace or a control
+    character. INSIDE the braces the split is upstream's and is not tidy: the six
+    bracketing characters and the control characters become \xN; with MINIMAL
+    lower-case hex (\x9;, not \x09;), while " # ; a space and even a BACKSLASH are
+    written literally. The backslash is upstream's own round-trip hazard, kept.
+    ⚠ ONE ARRAY CASE IS DELIBERATELY NOT MATCHED: upstream reads an optional TYPE
+    PREFIX (#2f64(...) is a typed array), which this implementation does not have.
+    Where the input runs out the two agree exactly -- #2, #2a, "#2 a" and "#2 abc"
+    all report end of input while reading an array -- but "#2 (...)" and #2x(...)
+    get a read-error here where upstream reports a wrong-type-arg out of
+    make-generalized-vector or length, naming a procedure the caller never used.
+    Both refuse; only the shape differs. Fenced by ExternalRepresentationTests.
+
 WHAT THIS PACKAGE DOES NOT DO
 =============================
 It is not a general-purpose Guile replacement. It implements the subset of Guile
@@ -2268,6 +2384,20 @@ Files worth reading first, by what you are trying to do
                                 old/new interop
     PortProcedureTests.cs       #:encoding, the two end-of-file conventions, the
                                 mode-string opener, close-port and file-port?
+    ExternalRepresentationTests.cs
+                                what a value writes as: bytevectors, the #{...}#
+                                symbol syntax and its escaping table, and array
+                                rank 0 / rank 1 / ragged literals
+    ReadErrorTests.cs           the reader's error surface: read-error as a Scheme
+                                condition, upstream's wording and position format,
+                                port naming, and the four inputs it used to accept
+    PortPositionTests.cs        port-line / port-column on every kind of port,
+                                input and output, and the real setters; the tab /
+                                carriage return / backspace / alarm / code-point
+                                rules; peek and unread; a datum's source location
+                                and the #{ #} synchronisation that moves it; and
+                                pretty-print's line breaking, which stands on all
+                                of it
     BinaryPortTests.cs          set-port-encoding!, the directory family,
                                 read-char / peek-char
     PopenTests.cs               (ice-9 popen) against real child processes,

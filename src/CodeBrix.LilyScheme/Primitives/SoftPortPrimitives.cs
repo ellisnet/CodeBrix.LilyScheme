@@ -128,19 +128,15 @@ public sealed class SoftPortWriter : TextWriter
 
         // Position tracking is done on entry to the PORT, not on flush: Guile advances a
         // port's line and column as data enters its buffer, and pretty-print's truncating
-        // writer reads (port-line port) to decide whether a line has been broken.
-        foreach (char c in text)
-        {
-            if (c == '\n')
-            {
-                Line++;
-                Column = 0;
-            }
-            else
-            {
-                Column++;
-            }
-        }
+        // writer reads (port-line port) to decide whether a line has been broken. The RULE
+        // is PortPosition's, shared with the reader and the tracking writer so that a
+        // tab, a carriage return, a backspace and a surrogate pair count the same on
+        // every kind of port, read or written.
+        long line = Line;
+        long column = Column;
+        Reader.PortPosition.Advance(text, ref line, ref column);
+        Line = line;
+        Column = column;
 
         int index = 0;
         while (index < text.Length)

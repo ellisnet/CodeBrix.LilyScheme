@@ -55,11 +55,15 @@ public static class ArrayPrimitives
             return new SchemeArray(lowerBounds, lengths, storage);
         });
 
-        interpreter.DefinePrimitive("array-ref", 2, -1, a =>
+        // ONE argument is enough: a rank-0 array is indexed by nothing at all, and
+        // (array-ref (read (open-input-string "#0(a)"))) answers a on the oracle. The
+        // arity used to demand an index, so the one array that has none was unreachable.
+        interpreter.DefinePrimitive("array-ref", 1, -1, a =>
             Ref(interpreter, AsArray(a[0], "array-ref"), Indices(a, 1, "array-ref")));
 
         // Guile's argument order: (array-set! array VALUE index ...).
-        interpreter.DefinePrimitive("array-set!", 3, -1, a =>
+        // Two is enough, for the same reason: (array-set! rank0 value) has no index.
+        interpreter.DefinePrimitive("array-set!", 2, -1, a =>
         {
             Set(interpreter, AsArray(a[0], "array-set!"), Indices(a, 2, "array-set!"), a[1]);
             return Unspecified.Instance;

@@ -30,6 +30,8 @@ public sealed class Interpreter
     public const int LargeStackBytes = 256 * 1024 * 1024;
 
     private readonly Dictionary<Symbol, object> _objectProperties = new Dictionary<Symbol, object>();
+    private Primitives.ColumnTrackingWriter _trackedOutput;
+    private Primitives.ColumnTrackingWriter _trackedError;
 
     /// <summary>Initializes an interpreter with the core primitives installed.</summary>
     public Interpreter()
@@ -115,6 +117,42 @@ public sealed class Interpreter
 
     /// <summary>Gets or sets the writer used for warnings and error output.</summary>
     public TextWriter ErrorWriter { get; set; } = Console.Error;
+
+    /// <summary>
+    /// Returns the position-tracking writer standing in front of <see cref="OutputWriter"/>,
+    /// creating it on first use and keeping it while the underlying writer is unchanged.
+    /// </summary>
+    /// <returns>The tracking writer every default-port write goes through.</returns>
+    /// <remarks>
+    /// <c>current-output-port</c> builds a FRESH <see cref="Primitives.SchemeOutputPort"/>
+    /// on every call, so the line and column cannot live on the port: they would restart
+    /// at zero each time it is asked for. They live on this one shared writer instead,
+    /// which is also where Guile keeps them. The property itself is left alone — a host
+    /// that sets a writer gets that same writer back — and the wrapper is cached beside it.
+    /// </remarks>
+    public TextWriter TrackedOutputWriter() => Track(OutputWriter, ref _trackedOutput);
+
+    /// <summary>
+    /// Returns the position-tracking writer standing in front of <see cref="ErrorWriter"/>,
+    /// on the same terms as <see cref="TrackedOutputWriter"/>.
+    /// </summary>
+    /// <returns>The tracking writer every error-port and warning-port write goes through.</returns>
+    public TextWriter TrackedErrorWriter() => Track(ErrorWriter, ref _trackedError);
+
+    private static TextWriter Track(TextWriter current, ref Primitives.ColumnTrackingWriter cache)
+    {
+        if (current is Primitives.ColumnTrackingWriter already)
+        {
+            return already;
+        }
+
+        if (cache == null || !ReferenceEquals(cache.Inner, current))
+        {
+            cache = current == null ? null : new Primitives.ColumnTrackingWriter(current);
+        }
+
+        return (TextWriter)cache ?? current;
+    }
 
     /// <summary>
     /// Gets or sets the reader behind <c>(current-input-port)</c>. Defaults to the

@@ -732,6 +732,60 @@ OTHER RECORDED DECISIONS
   nothing has asked for them yet; a caller that does will get the same "Not an
   array" a missing name would give, which is a visible failure rather than a wrong
   answer.
+* WHY EVERY PORT TRACKS ITS POSITION, AND WHAT THAT MOVED (2026-08-30).
+  port-column answered for a soft port and a string port and returned a flat 0 for
+  every other, which broke (ice-9 pretty-print) outright -- see AGENT-README
+  pitfall 53 for the mechanism and the measured update rules. PortPosition is now
+  the ONE place a line and column advance, shared by the reader, the tracking
+  output writer and the soft port, because Guile updates both directions with one
+  function; that is why a tab counts the same read or written.
+  THE INPUT HALF IS NOT COSMETIC AND CONSUMERS MUST BE TOLD. A datum's
+  source-properties ARE the port's line and column at its first character
+  (measured: "\n\n   (hello world)" records line 2 column 3), so two things
+  changed that a consumer can see. First, the reader counts a TAB to the tab stop,
+  so "\t(x)" records column 8 where it used to record 1 -- every source location
+  on a tab-indented line moves. Second, set-port-line! / set-port-column! on an
+  input port are real, so LilyPond's parser-ly-from-scheme.scm synchronisation
+  actually works and #{ ... #} embedded Scheme now carries the location of its real
+  source instead of the copy's. CodeBrix.LilyPort therefore owes its FULL battery
+  on this pin bump, not the calibrated pin-bump bar.
+* THE READER'S ERROR SURFACE, AND THE ONE PLACE IT DELIBERATELY DIFFERS
+  (2026-08-30). A syntax error is now a read-error condition -- see AGENT-README
+  pitfall 54 for the shape, the position convention and the strictness changes.
+  SchemeThrow is NO LONGER SEALED for this: SchemeReaderException derives from it,
+  which is what makes one object both a Scheme condition and the C# type hosts
+  have always caught. Every catch clause in the library is written
+  catch (SchemeThrow ...), so a subclass is handled like any other condition.
+  THE DIVERGENCE, kept on purpose and measured: an unterminated #{...}# symbol.
+  The oracle does not raise a read error there at all -- it reaches end of input
+  and calls char=? on the eof object, so the user sees
+    (wrong-type-arg "char=?" "Wrong type argument in position ~A (expecting ~A): ~S"
+                    (1 "character" #<eof>) (#<eof>))
+  which is an internal accident, not a designed message. This implementation
+  raises a read-error saying "unterminated #{...}# symbol". It is the ONE case in
+  the whole survey where the two disagree, and reproducing upstream would mean
+  reproducing a crash-shaped error that names a procedure the user never called.
+  Revisit only if something turns out to depend on the wrong-type-arg shape.
+* WHAT THE ERROR SURVEY FOUND, AND WHAT WAS DONE WITH IT (2026-08-30). The survey
+  turned up three things beyond the error surface, and all three were taken -- see
+  AGENT-README pitfall 55. Bytevectors printed as "System.Byte[]"; symbols printed
+  their bare name; and the array literal reader refused rank zero, printed a rank-1
+  array with a digit upstream omits, and reported a ragged literal with the wrong
+  condition KEY. The symbol rules came from a table of 33 punctuation characters
+  probed twice each (a<c>b and <c> alone) because the forcing set and the escaping
+  set are DIFFERENT and neither is guessable: ( forces the extended syntax and is
+  hex-escaped inside it, ; forces it and stays literal, ' forces it only first.
+  ⚠ WHAT WAS NOT TAKEN, and why: upstream's TYPED ARRAYS (#2f64(...)). The four
+  end-of-input cases match exactly; the two cases where a prefix is followed by a
+  literal are refused here with a read-error where upstream reports a wrong-type-arg
+  out of make-generalized-vector or length. Reading them as untyped arrays was tried
+  and REVERTED -- it answered #2(()) for #2x(a), a plausible WRONG value, which is
+  worse than either error. Implementing typed arrays is its own piece of work and
+  needs the uniform-vector types this package does not have.
+  ⚠ AND #u8(...) IS STILL REFUSED. It is SRFI-4 u8vector syntax; #vu8(...) is the
+  R6RS spelling and is read. Upstream prints the two differently (#u8 vs #vu8) even
+  though the bytes are the same, so supporting the reader half alone would trade one
+  divergence for another. SRFI-4 remains a declared non-goal.
 * WHY set-port-encoding! IS REAL. It was once a no-op that accepted its arguments
   and did nothing, which turned every octet above 0x7F into two UTF-8 bytes --
   nothing failed, and the corruption was only ever visible to whatever later READ

@@ -11,11 +11,19 @@ using CodeBrix.LilyScheme.Values;
 namespace CodeBrix.LilyScheme.Runtime;
 
 /// <summary>An error raised by Scheme code, carrying the arguments Guile's <c>throw</c> passes.</summary>
-public sealed class SchemeThrow : Exception
+public class SchemeThrow : Exception
 {
     /// <summary>Initializes a thrown condition.</summary>
     /// <param name="key">The throw key symbol.</param>
     /// <param name="arguments">The remaining throw arguments as a Scheme list.</param>
+    /// <remarks>
+    /// NOT sealed, for one reason:
+    /// <see cref="Reader.SchemeReaderException"/> derives from it. A read error is a
+    /// <c>read-error</c> condition in Guile and must be catchable by Scheme, while the
+    /// exception TYPE stays what hosts have always caught in C#. Every catch clause in
+    /// this library is written <c>catch (SchemeThrow ...)</c>, which matches a derived
+    /// type, so a subclass is caught, converted and re-raised like any other condition.
+    /// </remarks>
     public SchemeThrow(object key, object arguments)
         : base(Describe(key, arguments))
     {
