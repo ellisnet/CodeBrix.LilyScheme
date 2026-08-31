@@ -60,6 +60,22 @@ public sealed class SchemeInputPort
     public string FileName { get; }
 
     /// <summary>
+    /// Gets or sets the name this port reports for its encoding, upper-cased as
+    /// upstream reports it (<c>"UTF-8"</c>, <c>"ISO-8859-1"</c>, <c>"LATIN1"</c>).
+    /// </summary>
+    /// <remarks>
+    /// Encoding is OPERATIVE at the file boundary and NOMINAL everywhere else, which is
+    /// this implementation's shape rather than a compromise: a file port's reader or
+    /// writer genuinely decides bytes, while a string port has no byte layer at all
+    /// because strings are UTF-16 throughout. The name is still carried for every port
+    /// kind, because the one caller of <c>port-encoding</c> in the vendored layer --
+    /// <c>ice-9/pretty-print.scm</c> line 338 -- ROUND-TRIPS it onto another port rather
+    /// than interpreting it, and because upstream answers <c>"UTF-8"</c> for a string
+    /// port too (measured, all four port kinds).
+    /// </remarks>
+    public string PortEncoding { get; set; } = "UTF-8";
+
+    /// <summary>
     /// Gets or sets the line this port reports, counting from ZERO as Guile's
     /// <c>port-line</c> does.
     /// </summary>
@@ -341,6 +357,22 @@ public sealed class SchemeOutputPort
     /// </summary>
     public string FileName { get; set; }
 
+    /// <summary>
+    /// Gets or sets the name this port reports for its encoding, upper-cased as
+    /// upstream reports it (<c>"UTF-8"</c>, <c>"ISO-8859-1"</c>, <c>"LATIN1"</c>).
+    /// </summary>
+    /// <remarks>
+    /// Encoding is OPERATIVE at the file boundary and NOMINAL everywhere else, which is
+    /// this implementation's shape rather than a compromise: a file port's reader or
+    /// writer genuinely decides bytes, while a string port has no byte layer at all
+    /// because strings are UTF-16 throughout. The name is still carried for every port
+    /// kind, because the one caller of <c>port-encoding</c> in the vendored layer --
+    /// <c>ice-9/pretty-print.scm</c> line 338 -- ROUND-TRIPS it onto another port rather
+    /// than interpreting it, and because upstream answers <c>"UTF-8"</c> for a string
+    /// port too (measured, all four port kinds).
+    /// </remarks>
+    public string PortEncoding { get; set; } = "UTF-8";
+
     /// <summary>Gets a value indicating whether this port writes a FILE.</summary>
     public bool IsFilePort => FileName != null;
 
@@ -462,6 +494,55 @@ public static class PortPrimitives
         interpreter.DefinePrimitive("simple-format", 2, -1, a => SimpleFormat(interpreter, a));
         interpreter.DefinePrimitive("format", 2, -1, a => SimpleFormat(interpreter, a));
 
+        // The output half of the with-*-port family. The output side resolves its
+        // default port through the interpreter's WRITER rather than through a port
+        // object -- display with no port argument asks TrackedOutputWriter() -- so the
+        // redirection swaps the writer, which is also how the with-*-to-string pair
+        // beside it already works, and the two therefore nest correctly in either
+        // order. ⚠ with-output-to-port was not merely missing: the vendored
+        // ice-9/pretty-print.scm CALLS it (line 494), so truncated-print raised
+        // unbound-variable where the oracle prints (a b c). boot-9.scm calls it twice
+        // more, in peek-error and %load-announce.
+        interpreter.DefinePrimitive("with-output-to-port", 2, 2, a =>
+        {
+            TextWriter saved = interpreter.OutputWriter;
+            interpreter.OutputWriter = OutputPort(a[0], "with-output-to-port").Writer;
+            try
+            {
+                return interpreter.Evaluator.Apply(a[1], Array.Empty<object>());
+            }
+            finally
+            {
+                interpreter.OutputWriter = saved;
+            }
+        });
+
+        interpreter.DefinePrimitive("with-error-to-port", 2, 2, a =>
+        {
+            TextWriter saved = interpreter.ErrorWriter;
+            interpreter.ErrorWriter = OutputPort(a[0], "with-error-to-port").Writer;
+            try
+            {
+                return interpreter.Evaluator.Apply(a[1], Array.Empty<object>());
+            }
+            finally
+            {
+                interpreter.ErrorWriter = saved;
+            }
+        });
+
+        // How a port answers for a character its encoding cannot represent. A FLUID, and
+        // 'substitute is upstream's default (measured). It exists here because the
+        // vendored ice-9/pretty-print.scm rebinds it -- with-fluids at its line 335, to
+        // decide whether truncated-print's ellipsis can be the real U+2026 or has to be
+        // three dots -- so its absence, like with-output-to-port's, made that procedure
+        // raise unbound-variable rather than print. Nothing in this implementation
+        // CONSULTS it yet: strings are UTF-16 throughout and no port raises
+        // encoding-error, so the rebinding simply succeeds, which is what the oracle
+        // does in a UTF-8 locale too.
+        interpreter.DefineValue(
+            "%default-port-conversion-strategy", new Fluid(Symbol.Intern("substitute")));
+
         interpreter.DefinePrimitive("current-output-port", 0, 0, a => new SchemeOutputPort(interpreter.TrackedOutputWriter()));
         interpreter.DefinePrimitive("current-error-port", 0, 0, a => new SchemeOutputPort(interpreter.TrackedErrorWriter()));
         interpreter.DefinePrimitive("current-warning-port", 0, 0, a => new SchemeOutputPort(interpreter.TrackedErrorWriter()));
@@ -539,6 +620,39 @@ public static class PortPrimitives
 
     private static void InstallInput(Interpreter interpreter)
     {
+        // The current input port, built lazily and rebuilt whenever the host swaps the
+        // reader out from under it — which is what with-input-from-string does. It is
+        // declared HERE, at the top of the method, because every primitive whose port
+        // argument is OPTIONAL has to fall back to it: read, read-syntax, read-char and
+        // peek-char all used to answer end-of-file unconditionally when called with no
+        // port, so (read) read nothing rather than reading stdin, and the whole
+        // with-input-from-string / current-input-port family was inert.
+        SchemeInputPort currentInput = null;
+        SchemeInputPort currentInputOverride = null;
+        Func<SchemeInputPort> currentInputPort = () =>
+        {
+            // An override is a port a caller has put in front of the process's standard
+            // input for the duration of a thunk -- what with-input-from-string does. It
+            // has to be a PORT and not a reader: a reader-backed port streams, and a
+            // streaming port refuses `read' by design (buffering a live pipe to
+            // end-of-stream would block on the producer), so redirecting the reader
+            // would give a current-input-port that read-char could use and `read' could
+            // not. Upstream reaches the same place from the other side -- its
+            // with-input-from-string is call-with-input-string plus
+            // with-input-from-port.
+            if (currentInputOverride != null)
+            {
+                return currentInputOverride;
+            }
+
+            if (currentInput == null || !ReferenceEquals(currentInput.Stream, interpreter.InputReader))
+            {
+                currentInput = new SchemeInputPort(interpreter.InputReader, "<stdin>");
+            }
+
+            return currentInput;
+        };
+
         // Guile's signature is
         //   (open-input-file file #:key (binary #f) (encoding #f) (guess-encoding #f))
         // (ice-9/ports.scm). The encoding keyword is load-bearing rather than decorative:
@@ -686,17 +800,15 @@ public static class PortPrimitives
         // walks a string port a character at a time.
         interpreter.DefinePrimitive("read-char", 0, 1, a =>
         {
-            char? c = a.Length > 0 && a[0] is SchemeInputPort port
-                ? port.ReadCharacter()
-                : null;
+            char? c = (a.Length > 0 ? InputPort(a[0], "read-char") : currentInputPort())
+                .ReadCharacter();
             return c.HasValue ? (object)SchemeChar.Get(c.Value) : EofObject.Instance;
         });
 
         interpreter.DefinePrimitive("peek-char", 0, 1, a =>
         {
-            char? c = a.Length > 0 && a[0] is SchemeInputPort port
-                ? port.PeekCharacter()
-                : null;
+            char? c = (a.Length > 0 ? InputPort(a[0], "peek-char") : currentInputPort())
+                .PeekCharacter();
             return c.HasValue ? (object)SchemeChar.Get(c.Value) : EofObject.Instance;
         });
 
@@ -704,18 +816,38 @@ public static class PortPrimitives
         // VERBATIM and is pure Scheme over three C-side names — %read-line,
         // %read-delimited! and %init-rdelim-builtins (libguile/rdelim.c) — plus
         // unread-char for its 'peek handle-delim. The contracts below are that file's.
-        SchemeInputPort currentInput = null;
-        Func<SchemeInputPort> currentInputPort = () =>
-        {
-            if (currentInput == null || !ReferenceEquals(currentInput.Stream, interpreter.InputReader))
-            {
-                currentInput = new SchemeInputPort(interpreter.InputReader, "<stdin>");
-            }
+        interpreter.DefinePrimitive("current-input-port", 0, 0, a => currentInputPort());
 
-            return currentInput;
+        // The two redirections that put a port in front of (current-input-port) for the
+        // duration of a thunk. Upstream defines the string one in terms of the port one
+        // -- (call-with-input-string string (lambda (p) (with-input-from-port p thunk)))
+        // -- and so do these, through one local.
+        Func<SchemeInputPort, object, object> withInputFrom = (port, thunk) =>
+        {
+            SchemeInputPort saved = currentInputOverride;
+            currentInputOverride = port;
+            try
+            {
+                return interpreter.Evaluator.Apply(thunk, Array.Empty<object>());
+            }
+            finally
+            {
+                currentInputOverride = saved;
+            }
         };
 
-        interpreter.DefinePrimitive("current-input-port", 0, 0, a => currentInputPort());
+        interpreter.DefinePrimitive("with-input-from-port", 2, 2, a =>
+            withInputFrom(InputPort(a[0], "with-input-from-port"), a[1]));
+
+        // with-input-from-string was the one member of the string-port family this
+        // library did not have, though (ice-9 ports) exports it into the default
+        // environment upstream and its siblings -- with-output-to-string and
+        // call-with-input-string -- were both here. The thunk takes no arguments, so
+        // everything it reads without naming a port reads the string.
+        interpreter.DefinePrimitive("with-input-from-string", 2, 2, a =>
+            withInputFrom(
+                new SchemeInputPort(StringPrimitives.Text(a[0], "with-input-from-string"), null),
+                a[1]));
 
         interpreter.DefinePrimitive("unread-char", 1, 2, a =>
         {
@@ -808,12 +940,12 @@ public static class PortPrimitives
         });
 
         interpreter.DefinePrimitive("read", 0, 1, a =>
-            a.Length > 0 && a[0] is SchemeInputPort port ? port.ReadDatum() : EofObject.Instance);
+            (a.Length > 0 ? InputPort(a[0], "read") : currentInputPort()).ReadDatum());
 
         // read-syntax yields plain data here; psyntax attaches its own wraps, and we do
         // not yet thread source locations through the reader.
         interpreter.DefinePrimitive("read-syntax", 0, 1, a =>
-            a.Length > 0 && a[0] is SchemeInputPort port ? port.ReadDatum() : EofObject.Instance);
+            (a.Length > 0 ? InputPort(a[0], "read-syntax") : currentInputPort()).ReadDatum());
 
         // close-port is Guile's ANY-port close (libguile/ports.c's scm_close_port), so it
         // goes through the same helper `close' does. Handling only the input side left an
@@ -876,18 +1008,61 @@ public static class PortPrimitives
         // discard its file.
         interpreter.DefinePrimitive("set-port-encoding!", 2, 2, a =>
         {
+            string requested = StringPrimitives.Text(a[1], "set-port-encoding!");
+
+            // The name is recorded for EVERY port kind; re-encoding the bytes is only
+            // possible, and only meaningful, for a file port. See PortEncoding's remarks.
             if (a[0] is SchemeOutputPort output && output.FileName != null && !output.IsClosed)
             {
-                Encoding encoding = WithoutPreamble(
-                    SchemeBootstrap.ResolveEncoding(
-                        StringPrimitives.Text(a[1], "set-port-encoding!")));
+                Encoding encoding = WithoutPreamble(SchemeBootstrap.ResolveEncoding(requested));
 
                 output.Writer.Flush();
                 output.Writer.Dispose();
                 output.Writer = new StreamWriter(output.FileName, true, encoding);
             }
 
+            switch (a[0])
+            {
+                case SchemeOutputPort port:
+                    port.PortEncoding = CanonicalEncodingName(requested);
+                    break;
+                case SchemeInputPort port:
+                    port.PortEncoding = CanonicalEncodingName(requested);
+                    break;
+                default:
+                    throw new SchemeThrow(
+                        Symbol.Intern("wrong-type-arg"),
+                        Pair.List(
+                            new MutableString("set-port-encoding!"),
+                            new MutableString("Not a port: ~S"),
+                            Pair.List(a[0]),
+                            false));
+            }
+
             return Unspecified.Instance;
+        });
+
+        // (port-encoding port) -- the name, never the Encoding object. Its ONE caller in
+        // the vendored layer, ice-9/pretty-print.scm line 338, hands the answer straight
+        // back to set-port-encoding! on a second port, so what matters is that the two
+        // round-trip and that the default is upstream's.
+        interpreter.DefinePrimitive("port-encoding", 1, 1, a =>
+        {
+            switch (a[0])
+            {
+                case SchemeOutputPort port:
+                    return new MutableString(port.PortEncoding);
+                case SchemeInputPort port:
+                    return new MutableString(port.PortEncoding);
+                default:
+                    throw new SchemeThrow(
+                        Symbol.Intern("wrong-type-arg"),
+                        Pair.List(
+                            new MutableString("port-encoding"),
+                            new MutableString("Not a port: ~S"),
+                            Pair.List(a[0]),
+                            false));
+            }
         });
 
         // Answers for an OUTPUT file port too. scm/graphviz.scm's graph-write gates a
@@ -952,6 +1127,7 @@ public static class PortPrimitives
         // NO byte-order mark. StreamWriter's own UTF-8 default writes one, and a BOM at
         // the head of a generated Texinfo file is three bytes the oracle does not emit.
         Encoding encoding = new UTF8Encoding(false);
+        string encodingName = "UTF-8";
         for (int i = firstKeyword; i + 1 < arguments.Length; i += 2)
         {
             if (!(arguments[i] is Keyword keyword))
@@ -972,6 +1148,7 @@ public static class PortPrimitives
                     {
                         encoding = WithoutPreamble(
                             SchemeBootstrap.ResolveEncoding(name.ToString()));
+                        encodingName = CanonicalEncodingName(name.ToString());
                     }
 
                     break;
@@ -981,6 +1158,7 @@ public static class PortPrimitives
                     if (Evaluator.IsTrue(arguments[i + 1]))
                     {
                         encoding = Encoding.Latin1;
+                        encodingName = "ISO-8859-1";
                     }
 
                     break;
@@ -995,7 +1173,11 @@ public static class PortPrimitives
             }
         }
 
-        return new SchemeOutputPort(new StreamWriter(path, false, encoding)) { FileName = path };
+        return new SchemeOutputPort(new StreamWriter(path, false, encoding))
+        {
+            FileName = path,
+            PortEncoding = encodingName,
+        };
     }
 
     /// <summary>
@@ -1042,16 +1224,22 @@ public static class PortPrimitives
         // Guile's "b" is the one encoding whose bytes and characters correspond one to
         // one, which is the same reading #:binary gets on the keyword form.
         Encoding encoding = binary ? Encoding.Latin1 : new UTF8Encoding(false);
+        string encodingName = binary ? "ISO-8859-1" : "UTF-8";
 
         if (read)
         {
             return new SchemeInputPort(encoding.GetString(HostFile.ReadAllBytes(path)), path)
             {
                 IsFilePort = true,
+                PortEncoding = encodingName,
             };
         }
 
-        return new SchemeOutputPort(new StreamWriter(path, append, encoding)) { FileName = path };
+        return new SchemeOutputPort(new StreamWriter(path, append, encoding))
+        {
+            FileName = path,
+            PortEncoding = encodingName,
+        };
     }
 
     /// <summary>
@@ -1068,6 +1256,7 @@ public static class PortPrimitives
         string path, object[] arguments, int firstKeyword, string procedureName)
     {
         Encoding encoding = Encoding.UTF8;
+        string encodingName = "UTF-8";
         for (int i = firstKeyword; i + 1 < arguments.Length; i += 2)
         {
             if (!(arguments[i] is Keyword keyword))
@@ -1087,6 +1276,7 @@ public static class PortPrimitives
                     if (arguments[i + 1] is MutableString name)
                     {
                         encoding = SchemeBootstrap.ResolveEncoding(name.ToString());
+                        encodingName = CanonicalEncodingName(name.ToString());
                     }
 
                     break;
@@ -1095,6 +1285,7 @@ public static class PortPrimitives
                     if (Evaluator.IsTrue(arguments[i + 1]))
                     {
                         encoding = Encoding.Latin1;
+                        encodingName = "ISO-8859-1";
                     }
 
                     break;
@@ -1119,6 +1310,7 @@ public static class PortPrimitives
         return new SchemeInputPort(encoding.GetString(HostFile.ReadAllBytes(path)), path)
         {
             IsFilePort = true,
+            PortEncoding = encodingName,
         };
     }
 
@@ -1134,6 +1326,33 @@ public static class PortPrimitives
             Pair.List(
                 new MutableString(procedureName),
                 new MutableString("Not an input port: ~S"),
+                Pair.List(value),
+                false));
+    }
+
+    /// <summary>
+    /// The form upstream reports an encoding name in. MEASURED: it UPPER-CASES and does
+    /// nothing else -- <c>"latin1"</c> and <c>"Latin1"</c> both answer <c>"LATIN1"</c>,
+    /// <c>"utf-8"</c> answers <c>"UTF-8"</c>, and <c>"ISO-8859-1"</c> is unchanged. It
+    /// does NOT map aliases onto one canonical spelling, so neither does this.
+    /// </summary>
+    /// <param name="name">The name as the caller wrote it.</param>
+    /// <returns>The name as <c>port-encoding</c> will report it.</returns>
+    private static string CanonicalEncodingName(string name)
+        => name == null ? "UTF-8" : name.ToUpperInvariant();
+
+    private static SchemeOutputPort OutputPort(object value, string procedureName)
+    {
+        if (value is SchemeOutputPort port)
+        {
+            return port;
+        }
+
+        throw new SchemeThrow(
+            Symbol.Intern("wrong-type-arg"),
+            Pair.List(
+                new MutableString(procedureName),
+                new MutableString("Not an output port: ~S"),
                 Pair.List(value),
                 false));
     }

@@ -46,6 +46,23 @@ public class SchemeThrow : Exception
     /// </summary>
     public object ExceptionObject { get; set; }
 
+    /// <summary>
+    /// Builds Guile's <c>out-of-range</c> condition — <c>scm_out_of_range</c>'s shape,
+    /// which names the procedure and carries the offending value TWICE, once as the
+    /// message's irritant and once as the condition's own rest argument.
+    /// </summary>
+    /// <param name="procedureName">The procedure the value was passed to.</param>
+    /// <param name="value">The value that was out of range.</param>
+    /// <returns>The condition to throw.</returns>
+    internal static SchemeThrow OutOfRange(string procedureName, object value)
+        => new SchemeThrow(
+            Symbol.Intern("out-of-range"),
+            Pair.List(
+                new MutableString(procedureName),
+                new MutableString("Value out of range: ~S"),
+                Pair.List(value),
+                Pair.List(value)));
+
     private static string Describe(object key, object arguments)
         => "Scheme error: " + Printer.Write(key) + " " + Printer.Write(arguments);
 }

@@ -37,6 +37,42 @@ public static class ArrayPrimitives
         interpreter.DefinePrimitive("array-rank", 1, 1, a =>
             (long)AsArray(a[0], "array-rank").Rank);
 
+        // The length of dimension ZERO, which for the rank-1 case is just the vector's
+        // length. MEASURED on the oracle: a rank-2 array answers its FIRST dimension
+        // (#2((a b c) (d e f)) is 2, not 3 and not 6), and a RANK-0 array is a
+        // wrong-type-arg -- it has no dimension to report the length of.
+        interpreter.DefinePrimitive("array-length", 1, 1, a =>
+        {
+            SchemeArray array = AsArray(a[0], "array-length");
+            if (array.Rank == 0)
+            {
+                throw WrongType("array-length", "Not an array with rank 1 or greater: ~S", a[0]);
+            }
+
+            return (long)array.Lengths[0];
+        });
+
+        // The array's ELEMENT TYPE. Every array here is a general one, so the answer is
+        // always #t -- upstream's own answer for a vector and for a multi-dimensional
+        // general array (measured). Upstream also answers `a' for a string and `vu8' for
+        // a bytevector, because those ARE arrays there; they are not arrays here and
+        // never have been, so they take the family's "Not an array" like any other
+        // non-array. That is pitfall 33's divergence, reported consistently rather than
+        // widened here: array? must not accept a value that array-type refuses, nor the
+        // other way round.
+        interpreter.DefinePrimitive("array-type", 1, 1, a =>
+        {
+            AsArray(a[0], "array-type");
+            return true;
+        });
+
+        // There is no bitvector type in this implementation, so nothing can BE one and
+        // the answer is #f for every value -- true rather than merely plausible, which is
+        // the distinction that keeps this from being the stubbed-predicate shape. It is
+        // here because ice-9/pretty-print.scm asks it while dispatching on aggregate
+        // type; if bitvectors are ever added, this is the first thing that has to change.
+        interpreter.DefinePrimitive("bitvector?", 1, 1, a => false);
+
         interpreter.DefinePrimitive("make-array", 1, -1, a =>
         {
             ParseBounds(a, 1, "make-array", out int[] lowerBounds, out int[] lengths);

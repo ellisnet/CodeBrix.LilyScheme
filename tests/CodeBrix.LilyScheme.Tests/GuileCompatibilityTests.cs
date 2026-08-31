@@ -632,6 +632,74 @@ public class GuileCompatibilityTests
     }
 
     [Fact]
+    public void array_length_answers_the_first_dimension_and_refuses_rank_zero()
+    {
+        //Arrange / Act
+        // MEASURED: a rank-2 array answers its FIRST dimension -- 2 for #2((a b c) (d e
+        // f)), not 3 and not 6 -- and a rank-0 array has no dimension to report, so it is
+        // a wrong-type-arg. The list CONTROL must refuse, so "everything has a length"
+        // cannot pass.
+        string result = Eval(
+            "(let ((try (lambda (th) (catch #t th (lambda (k . a) (list 'ERR k))))))"
+            + " (list (try (lambda () (array-length (vector 1 2 3))))"
+            + "       (try (lambda () (array-length '#2((a b c) (d e f)))))"
+            + "       (try (lambda () (array-length '#0(a))))"
+            + "       (try (lambda () (array-length '(1 2))))))");
+
+        //Assert
+        result.Should().Be("(3 2 (ERR wrong-type-arg) (ERR wrong-type-arg))");
+    }
+
+    [Fact]
+    public void array_type_is_the_general_type_and_bitvectors_do_not_exist()
+    {
+        //Arrange / Act
+        // Every array here is a general one, which is upstream's #t for a vector and for
+        // a multi-dimensional array alike. bitvector? answers #f for every value because
+        // there is no such type to be one -- true, not merely plausible.
+        string result = Eval(
+            "(let ((try (lambda (th) (catch #t th (lambda (k . a) (list 'ERR k))))))"
+            + " (list (try (lambda () (array-type (vector 1 2))))"
+            + "       (try (lambda () (array-type '#2((a b) (c d)))))"
+            + "       (try (lambda () (array-type '(1 2))))"
+            + "       (bitvector? (vector 1)) (bitvector? \"ab\")"
+            + "       (bitvector? '(1 2)) (bitvector? 5)))");
+
+        //Assert
+        result.Should().Be("(#t #t (ERR wrong-type-arg) #f #f #f #f)");
+    }
+
+    [Fact]
+    public void truncated_print_matches_upstream_across_the_shapes_it_dispatches_on()
+    {
+        //Arrange / Act
+        // The procedure the array accessors were the last blockers for. It reaches
+        // with-output-to-port, %default-port-conversion-strategy, port-encoding,
+        // array-length, array-type and bitvector? -- six names that were all absent --
+        // so it doubles as the end-to-end fence for the whole group. Every expected
+        // string measured on the oracle.
+        string result = Eval(
+            "(use-modules (ice-9 pretty-print))",
+            "(list (call-with-output-string (lambda (p) (truncated-print '(a b c) p)))"
+            + " (call-with-output-string"
+            + "   (lambda (p) (truncated-print '(a b c d e f g h i j k l m n o p q r s t"
+            + "                                 u v w x y z) p #:width 20)))"
+            + " (call-with-output-string"
+            + "   (lambda (p) (truncated-print \"a fairly long string that will not fit\""
+            + "                                p #:width 20)))"
+            + " (call-with-output-string"
+            + "   (lambda (p) (truncated-print (vector 1 2 3 4 5 6 7 8 9 10 11 12)"
+            + "                                p #:width 20)))"
+            + " (call-with-output-string (lambda (p) (truncated-print 3.14159 p))))");
+
+        //Assert
+        result.Should().Be(
+            "(\"(a b c)\" \"(a b c d e f g h \u2026)\""
+            + " \"\\\"a fairly long str\u2026\\\"\""
+            + " \"#(1 2 3 4 5 6 7 8 \u2026)\" \"3.14159\")");
+    }
+
+    [Fact]
     public void module_map_walks_a_modules_own_bindings()
     {
         //Arrange

@@ -47,6 +47,75 @@ public class ExternalRepresentationTests
         return result;
     }
 
+    // What a CHARACTER writes as. A graphic character writes as itself; everything
+    // else takes a name, and this half of the table knew five where the reader knew
+    // twelve and Guile knows fifty-one -- so a control character wrote as ITSELF, a
+    // raw byte in the middle of Scheme output. Every row measured on the oracle.
+    [Theory]
+    [InlineData(0x01, "#\\soh")]
+    [InlineData(0x07, "#\\alarm")]
+    [InlineData(0x08, "#\\backspace")]
+    [InlineData(0x0b, "#\\vtab")]
+    [InlineData(0x0c, "#\\page")]
+    [InlineData(0x0d, "#\\return")]
+    [InlineData(0x0e, "#\\so")]
+    [InlineData(0x1a, "#\\sub")]
+    [InlineData(0x1b, "#\\esc")]
+    [InlineData(0x1c, "#\\fs")]
+    [InlineData(0x1f, "#\\us")]
+    [InlineData(0x7f, "#\\delete")]
+    [InlineData(0x00, "#\\nul")]
+    [InlineData(0x0a, "#\\newline")]
+    [InlineData(0x09, "#\\tab")]
+    [InlineData(0x20, "#\\space")]
+    [InlineData(0x41, "#\\A")]
+    public void a_character_writes_with_the_name_the_reference_printer_uses(
+        int codePoint, string expected)
+    {
+        //Arrange / Act
+        string written = Eval("(integer->char " + codePoint + ")");
+
+        //Assert
+        written.Should().Be(expected);
+    }
+
+    [Fact]
+    public void the_printed_name_is_the_first_one_its_code_point_answers_to()
+    {
+        //Arrange / Act / Assert
+        // Several names read to one code point, so the WRITE side has to pick, and the
+        // order is the reader's own table order. These four are where it shows.
+        Eval("(integer->char 13)").Should().Be("#\\return");   // not cr
+        Eval("(integer->char 10)").Should().Be("#\\newline");  // not linefeed or nl
+        Eval("(integer->char 12)").Should().Be("#\\page");     // not ff or np
+        Eval("(integer->char 127)").Should().Be("#\\delete");  // not del
+
+        //Assert -- the CONTROL: each of those names still READS, so the round trip holds
+        Eval("(char->integer #\\cr)").Should().Be("13");
+        Eval("(char->integer #\\linefeed)").Should().Be("10");
+        Eval("(char->integer #\\np)").Should().Be("12");
+        Eval("(char->integer #\\del)").Should().Be("127");
+    }
+
+    [Fact]
+    public void every_character_a_name_covers_reads_back_from_what_it_wrote()
+    {
+        //Arrange / Act / Assert
+        // The property the whole table exists for, asserted as a RELATIONSHIP rather
+        // than a literal: writing a character and reading the result must give the
+        // character back, for every code point through 0xFF.
+        Eval("(let loop ((n 0) (bad '()))"
+             + "  (if (> n 255) (if (null? bad) 'ok bad)"
+             + "      (loop (+ n 1)"
+             + "            (if (eqv? (integer->char n)"
+             + "                      (with-input-from-string"
+             + "                        (call-with-output-string"
+             + "                          (lambda (p) (write (integer->char n) p)))"
+             + "                        read))"
+             + "                bad (cons n bad)))))")
+            .Should().Be("ok");
+    }
+
     [Fact]
     public void a_bytevector_writes_as_its_own_literal()
     {

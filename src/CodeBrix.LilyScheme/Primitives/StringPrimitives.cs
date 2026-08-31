@@ -322,7 +322,7 @@ public static class StringPrimitives
     {
         interpreter.DefinePrimitive("char->integer", 1, 1,
             a => (long)TypeChecks.AsChar(a[0], "char->integer", 1).CodePoint);
-        interpreter.DefinePrimitive("integer->char", 1, 1, a => SchemeChar.Get(Index(a[0])));
+        interpreter.DefinePrimitive("integer->char", 1, 1, a => CodePointToChar(a[0]));
         interpreter.DefinePrimitive("char-upcase", 1, 1, a =>
             SchemeChar.Get(char.ToUpperInvariant(
                 (char)TypeChecks.AsChar(a[0], "char-upcase", 1).CodePoint)));
@@ -390,4 +390,33 @@ public static class StringPrimitives
     }
 
     private static int Index(object value) => (int)SchemeNumber.ToBigInteger(value);
+
+    /// <summary>
+    /// <c>integer->char</c>: the Unicode scalar value for a code point, refusing one
+    /// that is not a scalar value the way upstream refuses it.
+    /// </summary>
+    /// <param name="value">The code point.</param>
+    /// <returns>The character.</returns>
+    /// <remarks>
+    /// The range check is not defensive tidying. Without it the number went straight
+    /// into a <see cref="SchemeChar"/> and the .NET exception surfaced later and
+    /// elsewhere — <c>(integer->char 55296)</c> reached the PRINTER before anything
+    /// failed, and what came out was <c>ArgumentOutOfRangeException</c>, which Scheme
+    /// cannot catch. MEASURED on the oracle, the answer is
+    /// <c>(out-of-range "integer->char" "Value out of range: ~S" (55296) (55296))</c>.
+    /// The reader raises this same condition for <c>#\xD800</c>, because upstream's
+    /// reader reaches the character through <c>integer->char</c> itself.
+    /// </remarks>
+    internal static SchemeChar CodePointToChar(object value)
+    {
+        System.Numerics.BigInteger codePoint = SchemeNumber.ToBigInteger(value);
+        if (codePoint < 0
+            || codePoint > 0x10ffff
+            || (codePoint >= 0xd800 && codePoint <= 0xdfff))
+        {
+            throw SchemeThrow.OutOfRange("integer->char", value);
+        }
+
+        return SchemeChar.Get((int)codePoint);
+    }
 }

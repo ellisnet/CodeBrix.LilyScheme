@@ -331,4 +331,193 @@ public class PortProcedureTests
         //Assert
         result.Should().Be("misc-error");
     }
+
+    [Fact]
+    public void with_input_from_string_makes_the_string_the_current_input_port()
+    {
+        //Arrange / Act / Assert
+        // (ice-9 ports) exports this into the default environment upstream; it was the
+        // one member of the string-port family missing here, while with-output-to-string
+        // and call-with-input-string were both present. Every value measured on the
+        // oracle.
+        Eval("(with-input-from-string \"(a b) x\" read)").Should().Be("(a b)");
+        Eval("(with-input-from-string \"abc\" read-char)").Should().Be("#\\a");
+        Eval("(with-input-from-string \"abc\" peek-char)").Should().Be("#\\a");
+        Eval("(with-input-from-string \"abc\""
+             + "  (lambda () (list (read-char) (peek-char) (read-char))))")
+            .Should().Be("(#\\a #\\b #\\b)");
+        Eval("(with-input-from-string \"42\" (lambda () (list (read) (read))))")
+            .Should().Be("(42 #<eof>)");
+    }
+
+    [Fact]
+    public void the_redirection_is_undone_when_the_thunk_returns()
+    {
+        //Arrange / Act
+        // The CONTROL for the row above: a redirect that is never undone would make
+        // every later read see the same string, and the assertions above would still
+        // pass. Nesting proves the save-and-restore.
+        string result = Eval(
+            "(with-input-from-string \"outer\""
+            + "  (lambda ()"
+            + "    (list (with-input-from-string \"inner\" read-char)"
+            + "          (read-char))))");
+
+        //Assert
+        result.Should().Be("(#\\i #\\o)");
+    }
+
+    [Fact]
+    public void an_optional_port_argument_defaults_to_the_current_input_port()
+    {
+        //Arrange / Act / Assert
+        // read, read-syntax, read-char and peek-char all answered end-of-file
+        // UNCONDITIONALLY when called with no port -- a plausible answer that made the
+        // whole current-input-port mechanism inert, and the reason
+        // with-input-from-string could not have worked even once it existed.
+        Eval("(with-input-from-string \"(1 2)\" (lambda () (read)))").Should().Be("(1 2)");
+        Eval("(with-input-from-string \"(1 2)\" (lambda () (read-syntax)))")
+            .Should().Be("(1 2)");
+
+        //Assert -- the CONTROL: an EXPLICIT port still wins over the current one
+        Eval("(with-input-from-string \"outer\""
+             + "  (lambda () (read-char (open-input-string \"z\"))))")
+            .Should().Be("#\\z");
+    }
+
+    [Fact]
+    public void the_with_port_family_redirects_each_of_the_three_default_ports()
+    {
+        //Arrange / Act / Assert
+        // (ice-9 ports) exports all three; NONE of them was defined here. Upstream
+        // defines with-input-from-string in terms of with-input-from-port, and so do
+        // these. Every value measured on the oracle.
+        Eval("(call-with-output-string"
+             + "  (lambda (p) (with-output-to-port p (lambda () (display \"redirected\")))))")
+            .Should().Be("\"redirected\"");
+        Eval("(call-with-output-string"
+             + "  (lambda (p) (with-error-to-port p"
+             + "                (lambda () (display \"err\" (current-error-port))))))")
+            .Should().Be("\"err\"");
+        Eval("(with-input-from-port (open-input-string \"(x y) z\") read)").Should().Be("(x y)");
+        Eval("(with-input-from-port (open-input-string \"abc\")"
+             + "  (lambda () (list (read-char) (peek-char))))")
+            .Should().Be("(#\\a #\\b)");
+    }
+
+    [Fact]
+    public void the_with_port_family_nests_and_unwinds()
+    {
+        //Arrange / Act / Assert
+        // The CONTROL: a redirect that is never undone would leave every later write
+        // and read pointing at the inner port, and the assertions above would still
+        // pass. The writer-based half and the port-based half must each restore.
+        Eval("(list (call-with-output-string"
+             + "        (lambda (p) (with-output-to-port p (lambda () (display \"in\")))))"
+             + "      (with-output-to-string (lambda () (display \"out\"))))")
+            .Should().Be("(\"in\" \"out\")");
+        Eval("(with-input-from-string \"outer\""
+             + "  (lambda () (list (with-input-from-port (open-input-string \"i\") read-char)"
+             + "                   (read-char))))")
+            .Should().Be("(#\\i #\\o)");
+    }
+
+    [Theory]
+    [InlineData("(with-input-from-port 5 read)", "with-input-from-port")]
+    [InlineData("(with-output-to-port 5 (lambda () 1))", "with-output-to-port")]
+    [InlineData("(with-error-to-port 5 (lambda () 1))", "with-error-to-port")]
+    public void the_with_port_family_refuses_a_value_that_is_not_a_port(
+        string source, string procedureName)
+    {
+        //Arrange / Act
+        string result = Eval(
+            "(catch #t (lambda () " + source + ") (lambda (key . args) (list key (car args))))");
+
+        //Assert
+        result.Should().Be("(wrong-type-arg \"" + procedureName + "\")");
+    }
+
+    [Fact]
+    public void the_default_port_conversion_strategy_is_a_fluid_holding_substitute()
+    {
+        //Arrange / Act / Assert
+        // A fluid, not a procedure, and 'substitute is upstream's default (measured).
+        // The vendored ice-9/pretty-print.scm rebinds it with with-fluids, so its
+        // absence made truncated-print raise unbound-variable.
+        Eval("(list (fluid? %default-port-conversion-strategy)"
+             + "      (fluid-ref %default-port-conversion-strategy))")
+            .Should().Be("(#t substitute)");
+    }
+
+    [Fact]
+    public void every_port_kind_reports_utf_8_until_something_sets_it()
+    {
+        //Arrange / Act / Assert
+        // Measured on the oracle for all four kinds. The earlier reading that a string
+        // OUTPUT port answers "" was a measurement error of my own -- call-with-output-
+        // string returns the accumulated STRING, not the procedure's value.
+        Eval("(list (port-encoding (current-output-port))"
+             + "      (port-encoding (current-error-port))"
+             + "      (port-encoding (open-input-string \"x\"))"
+             + "      (let ((p (open-output-string))) (port-encoding p)))")
+            .Should().Be("(\"UTF-8\" \"UTF-8\" \"UTF-8\" \"UTF-8\")");
+    }
+
+    [Fact]
+    public void set_port_encoding_upper_cases_the_name_and_maps_no_aliases()
+    {
+        //Arrange / Act
+        // Upstream UPPER-CASES and does nothing else: latin1 and Latin1 both answer
+        // LATIN1, and ISO-8859-1 is NOT collapsed onto it. Measured, all five.
+        string result = Eval(
+            "(map (lambda (n) (let ((p (open-output-string)))"
+            + "                   (set-port-encoding! p n) (port-encoding p)))"
+            + "     (list \"latin1\" \"Latin1\" \"ISO-8859-1\" \"UTF-8\" \"utf-8\"))");
+
+        //Assert
+        result.Should().Be("(\"LATIN1\" \"LATIN1\" \"ISO-8859-1\" \"UTF-8\" \"UTF-8\")");
+    }
+
+    [Fact]
+    public void a_file_port_reports_the_encoding_it_was_opened_with()
+    {
+        //Arrange
+        string path = WriteScratch(new byte[] { 0x68, 0x69, 0x0a });
+        string quoted = Printer.WriteString(path);
+
+        //Act / Assert -- an explicit #:encoding shows through, the default is UTF-8, and
+        //binary is ISO-8859-1 on both the keyword form and the mode string. Measured.
+        Eval("(list (let ((p (open-input-file " + quoted + " #:encoding \"ISO-8859-1\")))"
+             + "        (port-encoding p))"
+             + "      (let ((p (open-input-file " + quoted + "))) (port-encoding p))"
+             + "      (let ((p (open-input-file " + quoted + " #:binary #t))) (port-encoding p))"
+             + "      (let ((p (open-file " + quoted + " \"rb\"))) (port-encoding p))"
+             + "      (let ((p (open-file " + quoted + " \"r\"))) (port-encoding p)))")
+            .Should().Be("(\"ISO-8859-1\" \"UTF-8\" \"ISO-8859-1\" \"ISO-8859-1\" \"UTF-8\")");
+    }
+
+    [Fact]
+    public void setting_a_file_ports_encoding_still_re_encodes_the_bytes()
+    {
+        //Arrange
+        // The CONTROL that recording the NAME did not replace the operative half:
+        // scm/backend-library.scm calls set-port-encoding! on a real output file port and
+        // depends on the bytes changing, not on a label.
+        string path = WriteScratch(new byte[0]);
+        string quoted = Printer.WriteString(path);
+
+        //Act
+        string encoding = Eval(
+            "(let ((p (open-output-file " + quoted + ")))"
+            + "  (set-port-encoding! p \"ISO-8859-1\")"
+            + "  (display \"\\xe9;\" p)"
+            + "  (close-port p)"
+            + "  (port-encoding p))");
+
+        //Assert -- the name is recorded ...
+        encoding.Should().Be("\"ISO-8859-1\"");
+
+        //Assert -- ... and the byte on disk is Latin-1's single 0xE9, not UTF-8's two
+        File.ReadAllBytes(path).Should().Equal(new byte[] { 0xe9 });
+    }
 }

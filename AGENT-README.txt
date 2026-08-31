@@ -2284,6 +2284,126 @@ PORTS, FILES AND THE OUTSIDE WORLD
     make-generalized-vector or length, naming a procedure the caller never used.
     Both refuse; only the shape differs. Fenced by ExternalRepresentationTests.
 
+56. A CHARACTER LITERAL KNOWS EVERY NAME GUILE KNOWS, since 2026-08-30, and the
+    ones it did not know were answered WRONG rather than refused. The table had
+    twelve names in it; Guile has fifty-one, in five groups searched in order --
+    R5RS (space, newline), R6RS (nul alarm backspace tab linefeed vtab page
+    return esc delete), R7RS (escape), the abbreviated C0 control names (soh stx
+    etx eot enq ack bel bs ht lf vt ff cr so si dle dc1..dc4 nak syn etb can em
+    sub fs gs rs us sp del) and the compatibility names (null nl np). All five
+    are matched CASE-INSENSITIVELY, so #\Cr and #\NUL read. The precedence is not
+    decoration: several names answer one code point and it decides which name a
+    character is WRITTEN with.
+    ⚠ WHY IT MATTERED. Before, an unknown name fell back to "the name's first
+    character", so #\cr read as #\c and #\lf as #\l -- a silently WRONG character.
+    LilyPond's own lily.scm line 1055 does (string-delete #\cr ...) and
+    (string-split ... #\nl), and framework-ps.scm line 596 maps #\cr and #\nul, so
+    both files had been parsing to the wrong thing for the project's whole life.
+    Pitfall 54's refusal made the same two files stop reading ALTOGETHER, which
+    took LilyPort's engine down at boot -- it is what turned a quiet defect loud.
+    THE NUMERIC ESCAPES, measured with them: octal is written bare (#\101 is A,
+    while #\8 is the character 8 and #\19 is an unknown NAME, because a leading
+    digit that does not make a valid octal number FALLS THROUGH to the table), and
+    hex takes a LOWER-CASE x only -- #\X41, #\u41 and #\U41 are all refused by
+    Guile and were all accepted here. #\rubout was accepted too and is not a Guile
+    name. A code point outside 0..10FFFF or inside the surrogate block is
+    integer->char's out-of-range condition, NOT a read-error, because upstream's
+    reader reaches the character through integer->char itself; integer->char used
+    to let a .NET ArgumentOutOfRangeException out instead, and that one did not
+    surface until the PRINTER touched the value.
+    ⚠ THE DOTTED-CIRCLE RULE HAD TO BE MEASURED, NOT READ: upstream ships two
+    readers and they DISAGREE. libguile/read.c tests the FIRST character for
+    U+25CC and answers the second; module/ice-9/read.scm tests the SECOND and
+    answers the first -- and ice-9/read.scm is the one Guile 3 runs. Measured on
+    the oracle, #\<combining acute><dotted circle> is 769 and the other order is
+    refused. Fenced by SchemeReaderTests (61 acceptance rows, 6 refusals and the
+    two-way control) and WrongTypeArgumentTests (the out-of-range family).
+    THE PRINTER USES THE SAME TABLE BACKWARDS, and its half was five names long, so
+    a control character wrote as ITSELF -- a raw byte in the middle of Scheme output
+    where the oracle writes #\soh, #\vtab, #\delete. A GRAPHIC character (Unicode
+    categories L, M, N, P and S -- upstream's own test, which is what keeps SPACE,
+    category Zs, on the named path) writes as itself; anything else takes a name if
+    it has one and otherwise the octal escape. The search ORDER decides which name a
+    character is written with, so 0x0d writes as #\return and not #\cr, 0x0a as
+    #\newline and not #\lf, 0x0c as #\page and not #\ff -- while all of cr, lf and ff
+    still READ. Fenced by ExternalRepresentationTests, including a round trip over
+    every code point through 0xFF asserted as a relationship rather than a literal.
+
+57. AN OPTIONAL PORT ARGUMENT MEANS THE CURRENT INPUT PORT, since 2026-08-30, and
+    for read, read-syntax, read-char and peek-char it used to mean END OF FILE. Called
+    with no port they answered #<eof> unconditionally -- a plausible answer, so
+    nothing looked broken: (read) simply read nothing, and the whole
+    current-input-port mechanism was inert behind it. All four now fall back to
+    (current-input-port), and an explicit port argument still wins.
+    with-input-from-string came with them; it was the one member of the string-port
+    family missing, though (ice-9 ports) exports it into the default environment
+    upstream and both with-output-to-string and call-with-input-string were here.
+    ⚠ IT REDIRECTS THE PORT, NOT THE READER, and that is forced rather than chosen:
+    a reader-backed port STREAMS, and a streaming port refuses `read' by design
+    (pitfall 40) -- redirecting Interpreter.InputReader would give a
+    current-input-port that read-char could use and `read' could not. Upstream lands
+    in the same place from the other side, defining with-input-from-string as
+    call-with-input-string plus with-input-from-port.
+    THE WHOLE with-*-port FAMILY WAS ABSENT and all three are here now:
+    with-input-from-port, with-output-to-port and with-error-to-port. The input one
+    swaps the port override described above; the two output ones swap the
+    interpreter's WRITER, because the output side resolves its default port through
+    the writer (display with no port asks TrackedOutputWriter()) -- which is also how
+    with-output-to-string already worked, so the two nest correctly in either order.
+    ⚠ with-output-to-port was not merely missing: the vendored ice-9/pretty-print.scm
+    CALLS it at line 494, so truncated-print raised unbound-variable where the oracle
+    prints (a b c); boot-9.scm calls it twice more, in peek-error and %load-announce.
+    %default-port-conversion-strategy came with it -- a FLUID holding 'substitute
+    (measured), which pretty-print.scm rebinds with with-fluids at its line 335.
+    Nothing here CONSULTS that fluid: strings are UTF-16 throughout and no port raises
+    encoding-error, so the rebinding simply succeeds.
+    port-encoding CAME WITH THEM, and BOTH PORT TYPES NOW CARRY AN ENCODING NAME
+    defaulting to "UTF-8" -- upstream's answer for all four port kinds (measured; an
+    earlier reading of "" for a string output port was a MEASUREMENT ERROR, since
+    call-with-output-string returns the accumulated STRING and not the procedure's
+    value). set-port-encoding! records the name for every port kind AND keeps
+    re-encoding the bytes of a file port, which scm/backend-library.scm depends on.
+    Upstream's canonicalisation is UPPER-CASING and nothing else: "latin1" and
+    "Latin1" both answer "LATIN1", "ISO-8859-1" is NOT collapsed onto it, and an
+    explicit #:encoding at open time shows through (#:binary is "ISO-8859-1").
+    ⚠ ENCODING IS OPERATIVE AT THE FILE BOUNDARY AND NOMINAL EVERYWHERE ELSE. That is
+    the shape of this implementation rather than a compromise: a file port's reader or
+    writer really does decide bytes, while a string port has no byte layer at all
+    because strings are UTF-16 throughout. The name is carried for every port kind
+    because pretty-print.scm:338 ROUND-TRIPS it onto another port rather than
+    interpreting it.
+    ⚠ ONE CONSEQUENCE, DELIBERATELY NOT BUILT: nothing here raises encoding-error, so
+    %default-port-conversion-strategy 'error cannot fire and truncated-print always
+    picks the real U+2026 ellipsis where Guile on a Latin-1 port falls back to "...".
+    Upstream's fallback IS reachable (measured). Building it means checking
+    representability on the write path for ports carrying a non-UTF-8 name; it would
+    buy one character in one procedure that nothing in LilyPort calls. Decided
+    2026-08-30: LEFT ALONE.
+    Fenced by PortProcedureTests, with the nesting case as the control that a redirect
+    is undone and a refusal row per family member.
+
+58. THE ARRAY FAMILY GAINED ITS LAST THREE ACCESSORS, 2026-08-30, and with them
+    (ice-9 pretty-print) reached full parity -- truncated-print RUNS now, having been
+    blocked in turn on with-output-to-port, %default-port-conversion-strategy,
+    port-encoding and then these. array-length answers dimension ZERO (measured: 2 for
+    #2((a b c) (d e f)), not 3 and not 6) and refuses a rank-0 array, which has no
+    dimension to report. array-type answers #t: every array here is a general one,
+    which is upstream's own answer for a vector and for a multi-dimensional array.
+    bitvector? answers #f for every value, because there is no such type to BE one --
+    true rather than merely plausible, which is what keeps it out of pitfall 12's
+    stubbed-predicate shape; it is the first thing to change if bitvectors are added.
+    ⚠ PITFALL 33'S DIVERGENCE EXTENDS TO THESE TWO, deliberately: upstream answers `a'
+    for a string and `vu8' for a bytevector because those ARE arrays there and are not
+    arrays here, so they take the family's "Not an array" like any other non-array.
+    array? must not accept what array-type refuses, nor the other way round.
+    ⚠ A DIFF OF (ice-9 pretty-print)'s BINDINGS AGAINST THE ORACLE NOW SHOWS EXACTLY
+    ONE NAME, `else', and that is NOT a defect: cond and case handle it as syntax here
+    rather than as a module binding, verified by running all three forms. That diff is
+    the cheap instrument for this question -- module-defined? over every head symbol in
+    the file, on both engines -- and it is what turned a five-round guessing chain into
+    one measurement. Fenced by GuileCompatibilityTests, whose truncated-print case is
+    the end-to-end fence for all six names.
+
 WHAT THIS PACKAGE DOES NOT DO
 =============================
 It is not a general-purpose Guile replacement. It implements the subset of Guile
@@ -2371,7 +2491,9 @@ Files worth reading first, by what you are trying to do
                                 round-trips, and corruption reading as a MISS
     SchemeReaderTests.cs        reader coverage and the Printer.WriteString round
                                 trip a host path depends on, Windows and POSIX
-                                shapes both
+                                shapes both; and the whole character-literal
+                                table -- every name Guile knows, the octal and
+                                hex escapes, and the forms it refuses (pitfall 56)
     SourceLocationTests.cs      source locations from the reader through psyntax
                                 into a procedure's printed representation, and the
                                 program-print latch
@@ -2382,12 +2504,16 @@ Files worth reading first, by what you are trying to do
                                 family, the shim modules, prompts, pretty-print
     ModernExceptionTests.cs     the modern exception API from both sides of the
                                 old/new interop
-    PortProcedureTests.cs       #:encoding, the two end-of-file conventions, the
+    PortProcedureTests.cs       #:encoding, the two end-of-file conventions,
+                                with-input-from-string and the optional-port
+                                defaulting behind it (pitfall 57), the
                                 mode-string opener, close-port and file-port?
     ExternalRepresentationTests.cs
                                 what a value writes as: bytevectors, the #{...}#
-                                symbol syntax and its escaping table, and array
-                                rank 0 / rank 1 / ragged literals
+                                symbol syntax and its escaping table, array
+                                rank 0 / rank 1 / ragged literals, and the
+                                character-name table the printer writes with
+                                (pitfall 56)
     ReadErrorTests.cs           the reader's error surface: read-error as a Scheme
                                 condition, upstream's wording and position format,
                                 port naming, and the four inputs it used to accept

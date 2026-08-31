@@ -148,6 +148,64 @@ public class WrongTypeArgumentTests
             .Should().Be("\"aZc\"");
     }
 
+    [Theory]
+    [InlineData("(integer->char 55296)", "55296")]
+    [InlineData("(integer->char 1114112)", "1114112")]
+    [InlineData("(integer->char -1)", "-1")]
+    public void integer_to_char_refuses_a_value_that_is_not_a_unicode_scalar(
+        string source, string irritant)
+    {
+        //Arrange / Act
+        // A code point outside 0..10FFFF, or inside the surrogate block, used to go
+        // straight into a character and fail LATER and ELSEWHERE -- 55296 reached the
+        // PRINTER before anything complained, and what came out was a .NET
+        // ArgumentOutOfRangeException that no Scheme (catch #t ...) can see.
+        SchemeThrow thrown = Raise(source);
+
+        //Assert -- the oracle's own condition, measured:
+        // (out-of-range "integer->char" "Value out of range: ~S" (55296) (55296))
+        thrown.Should().NotBeNull();
+        thrown.Key.Should().Be(Symbol.Intern("out-of-range"));
+        Printer.Write(thrown.Arguments).Should().Be(
+            "(\"integer->char\" \"Value out of range: ~S\" (" + irritant + ") ("
+            + irritant + "))");
+    }
+
+    [Fact]
+    public void an_out_of_range_character_escape_raises_that_same_condition()
+    {
+        //Arrange / Act
+        // The CONTROL for the row above, and a fidelity point in its own right: the
+        // reference reader reaches the character through integer->char itself, so
+        // #\xD800 is NOT a read-error -- measured, the oracle answers
+        // "In procedure integer->char: Argument 1 out of range: 55296".
+        SchemeThrow thrown = Raise("(read (open-input-string \"#\\\\xD800\"))");
+
+        //Assert
+        thrown.Should().NotBeNull();
+        thrown.Key.Should().Be(Symbol.Intern("out-of-range"));
+        Printer.Write(thrown.Arguments).Should().Be(
+            "(\"integer->char\" \"Value out of range: ~S\" (55296) (55296))");
+
+        //Assert -- and the CONTROL: a hex escape inside the range still reads
+        Eval("(read (open-input-string \"#\\\\x41\"))").Should().Be("#\\A");
+    }
+
+    [Fact]
+    public void a_character_escape_too_large_for_a_machine_word_is_the_same_condition()
+    {
+        //Arrange / Act
+        // Parsing the digits into a fixed width let an OverflowException out of the
+        // reader; the oracle answers with the ordinary out-of-range condition and the
+        // whole value as its irritant.
+        SchemeThrow thrown = Raise("(read (open-input-string \"#\\\\xffffffffff\"))");
+
+        //Assert
+        thrown.Should().NotBeNull();
+        Printer.Write(thrown.Arguments).Should().Be(
+            "(\"integer->char\" \"Value out of range: ~S\" (1099511627775) (1099511627775))");
+    }
+
     [Fact]
     public void a_loop_site_reports_the_offending_position()
     {

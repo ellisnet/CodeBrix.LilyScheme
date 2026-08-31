@@ -138,6 +138,153 @@ public class SchemeReaderTests
     public void reads_a_character_by_name()
         => ((SchemeChar)ReadOne("#\\space")).CodePoint.Should().Be(32);
 
+    // Guile's five character-name tables, in the order it searches them: R5RS, R6RS,
+    // R7RS, the abbreviated C0 control names, and the leftover compatibility names.
+    // EVERY row was measured on the pinned 2.27.2 oracle one input at a time, through
+    // (char->integer (read (open-input-string "#\\NAME"))); the refusals below were
+    // measured the same way. The 33 abbreviations were MISSING, and their absence was
+    // silent rather than loud: the reader fell back to "the name's first character",
+    // so #\cr answered #\c and #\lf answered #\l — which is what LilyPond's own
+    // lily.scm and framework-ps.scm spell, so both files parsed to the wrong thing.
+    [Theory]
+    [InlineData("space", 0x20)]
+    [InlineData("newline", 0x0a)]
+    [InlineData("nul", 0x00)]
+    [InlineData("alarm", 0x07)]
+    [InlineData("backspace", 0x08)]
+    [InlineData("tab", 0x09)]
+    [InlineData("linefeed", 0x0a)]
+    [InlineData("vtab", 0x0b)]
+    [InlineData("page", 0x0c)]
+    [InlineData("return", 0x0d)]
+    [InlineData("esc", 0x1b)]
+    [InlineData("delete", 0x7f)]
+    [InlineData("escape", 0x1b)]
+    [InlineData("soh", 0x01)]
+    [InlineData("stx", 0x02)]
+    [InlineData("etx", 0x03)]
+    [InlineData("eot", 0x04)]
+    [InlineData("enq", 0x05)]
+    [InlineData("ack", 0x06)]
+    [InlineData("bel", 0x07)]
+    [InlineData("bs", 0x08)]
+    [InlineData("ht", 0x09)]
+    [InlineData("lf", 0x0a)]
+    [InlineData("vt", 0x0b)]
+    [InlineData("ff", 0x0c)]
+    [InlineData("cr", 0x0d)]
+    [InlineData("so", 0x0e)]
+    [InlineData("si", 0x0f)]
+    [InlineData("dle", 0x10)]
+    [InlineData("dc1", 0x11)]
+    [InlineData("dc2", 0x12)]
+    [InlineData("dc3", 0x13)]
+    [InlineData("dc4", 0x14)]
+    [InlineData("nak", 0x15)]
+    [InlineData("syn", 0x16)]
+    [InlineData("etb", 0x17)]
+    [InlineData("can", 0x18)]
+    [InlineData("em", 0x19)]
+    [InlineData("sub", 0x1a)]
+    [InlineData("fs", 0x1c)]
+    [InlineData("gs", 0x1d)]
+    [InlineData("rs", 0x1e)]
+    [InlineData("us", 0x1f)]
+    [InlineData("sp", 0x20)]
+    [InlineData("del", 0x7f)]
+    [InlineData("null", 0x00)]
+    [InlineData("nl", 0x0a)]
+    [InlineData("np", 0x0c)]
+    [InlineData("SPACE", 0x20)]
+    [InlineData("Cr", 0x0d)]
+    [InlineData("NUL", 0x00)]
+    [InlineData("Nl", 0x0a)]
+    public void reads_every_character_name_the_reference_reader_knows(string name, int codePoint)
+    {
+        //Arrange / Act
+        object value = ReadOne("#\\" + name);
+
+        //Assert
+        ((SchemeChar)value).CodePoint.Should().Be(codePoint);
+    }
+
+    [Fact]
+    public void a_control_abbreviation_is_the_control_character_not_its_first_letter()
+    {
+        //Arrange -- the two literals LilyPond's lily.scm spells at line 1055
+        //Act
+        int cr = ((SchemeChar)ReadOne("#\\cr")).CodePoint;
+        int nl = ((SchemeChar)ReadOne("#\\nl")).CodePoint;
+
+        //Assert
+        cr.Should().Be('\r');
+        nl.Should().Be('\n');
+
+        //Assert -- the CONTROL: the one-letter literals they were once mistaken for,
+        //which must keep answering the LETTERS
+        ((SchemeChar)ReadOne("#\\c")).CodePoint.Should().Be('c');
+        ((SchemeChar)ReadOne("#\\n")).CodePoint.Should().Be('n');
+    }
+
+    // The numeric escapes. Octal is written bare and hex takes a LOWER-CASE x; the
+    // digits of either may be upper case. A leading digit that does not make a valid
+    // octal number falls through to the name table rather than raising, which is why
+    // #\19 is an unknown NAME and #\8 is simply the character 8.
+    [Theory]
+    [InlineData("x41", 0x41)]
+    [InlineData("x7F", 0x7f)]
+    [InlineData("x10FFFF", 0x10ffff)]
+    [InlineData("101", 0x41)]
+    [InlineData("0", '0')]
+    [InlineData("7", '7')]
+    [InlineData("8", '8')]
+    public void reads_the_numeric_character_escapes(string token, int codePoint)
+        => ((SchemeChar)ReadOne("#\\" + token)).CodePoint.Should().Be(codePoint);
+
+    [Fact]
+    public void reads_a_character_literal_that_needs_a_surrogate_pair()
+        //Arrange / Act / Assert -- U+1D11E MUSICAL SYMBOL G CLEF; one Scheme character,
+        //two UTF-16 units, and the oracle answers 119070
+        => ((SchemeChar)ReadOne("#\\\U0001D11E")).CodePoint.Should().Be(0x1D11E);
+
+    [Fact]
+    public void a_dotted_circle_beside_a_combining_character_is_dropped()
+    {
+        //Arrange / Act -- U+0301 COMBINING ACUTE ACCENT written with U+25CC DOTTED
+        //CIRCLE so that it does not combine with the backslash
+        object value = ReadOne("#\\́◌");
+
+        //Assert -- measured 769 on the oracle
+        ((SchemeChar)value).CodePoint.Should().Be(0x0301);
+
+        //Assert -- the CONTROL, and the reason this had to be measured rather than
+        //read off upstream's C source: read.c tests the FIRST character and answers
+        //the second, ice-9/read.scm tests the SECOND and answers the first, and it is
+        //ice-9/read.scm that runs -- so the other order is REFUSED
+        System.Action act = () => ReadOne("#\\◌́");
+        act.Should().Throw<SchemeReaderException>()
+            .WithMessage("*unknown character name*");
+    }
+
+    // Four forms this reader used to accept that the reference reader refuses, and one
+    // shape of name it never had. All five measured as errors on the oracle.
+    [Theory]
+    [InlineData("rubout")]
+    [InlineData("X41")]
+    [InlineData("u41")]
+    [InlineData("U41")]
+    [InlineData("19")]
+    [InlineData("nosuchname")]
+    public void refuses_a_character_form_the_reference_reader_refuses(string token)
+    {
+        //Arrange / Act
+        System.Action act = () => ReadOne("#\\" + token);
+
+        //Assert
+        act.Should().Throw<SchemeReaderException>()
+            .WithMessage("*unknown character name*");
+    }
+
     [Fact]
     public void reads_a_keyword()
         => ((Keyword)ReadOne("#:optional")).Name.Name.Should().Be("optional");

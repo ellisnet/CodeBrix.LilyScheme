@@ -22,6 +22,10 @@ namespace CodeBrix.LilyScheme.Reader;
 /// </summary>
 public sealed class SchemeReader
 {
+    // U+25CC DOTTED CIRCLE, the placeholder a combining character may be written over
+    // in a #\ literal so that it does not combine with the backslash.
+    private const char DottedCircle = '◌';
+
     private readonly string _text;
     private readonly string _fileName;
     private int _position;
@@ -1016,42 +1020,174 @@ public sealed class SchemeReader
             return SchemeChar.Get(name[0]);
         }
 
+        // One character that needs a surrogate pair to spell is still ONE character:
+        // #\<astral char> answers that character, not a character name.
+        if (name.Length == 2 && char.IsSurrogatePair(name[0], name[1]))
+        {
+            return SchemeChar.Get(char.ConvertToUtf32(name[0], name[1]));
+        }
+
+        // A combining character may be written with a dotted circle beside it so that it
+        // does not combine with the backslash; the circle is decoration and is dropped.
+        // ⚠ MEASURED, because the two readers upstream ships DISAGREE here and only one
+        // of them runs: read.c tests the FIRST character and answers the second, while
+        // ice-9/read.scm — the reader Guile 3 actually uses, and the one the oracle
+        // answered from — tests the SECOND and answers the first. #\<combining acute><o>
+        // reads as 769 on the oracle and #\<o><combining acute> is refused there.
+        if (name.Length == 2 && name[1] == DottedCircle)
+        {
+            return SchemeChar.Get(name[0]);
+        }
+
+        // The numeric escapes, in the order the reference reader tries them, and each
+        // only when EVERY digit belongs to its radix -- an unparsable one FALLS THROUGH
+        // to the name table rather than raising, which is how #\example (an 'e' that is
+        // not an octal digit) stays a name lookup. Parsing blind used to let a .NET
+        // FormatException out of the reader for #\xzz. There is deliberately no 'X',
+        // 'u' or 'U' form: MEASURED against Guile 3.0, #\X41, #\u41 and #\U41 are all
+        // refused there and only the lower-case #\x41 reads.
+        if (name[0] >= '0' && name[0] <= '7' && IsDigitsOfRadix(name, 0, 8))
+        {
+            return NumericCharacter(name, 0, 8);
+        }
+
+        if (name[0] == 'x' && IsDigitsOfRadix(name, 1, 16))
+        {
+            return NumericCharacter(name, 1, 16);
+        }
+
+        int named = NamedCharacter(name);
+        if (named >= 0)
+        {
+            return SchemeChar.Get(named);
+        }
+
+        // Upstream spells this one with a lower-case ~a where its neighbours use ~S;
+        // the inconsistency is upstream's and is reproduced, not tidied.
+        throw Error("unknown character name ~a", new MutableString(name));
+    }
+
+    /// <summary>
+    /// Guile's character-name table: the R5RS names, then the R6RS ones, then R7RS's,
+    /// then the abbreviated C0 control names, then the leftover compatibility names —
+    /// searched in that order and case-insensitively, exactly as
+    /// <c>scm_i_charname_to_char</c> searches them.
+    /// </summary>
+    /// <param name="name">The token that followed <c>#\</c>.</param>
+    /// <returns>The code point, or -1 when the name is not one Guile knows.</returns>
+    /// <remarks>
+    /// The precedence is not decoration: several names answer the same code point and
+    /// the table is also read backwards by the printer, so the order decides which name
+    /// a character is WRITTEN with. The abbreviations were absent before, and their
+    /// absence was silent rather than loud — the reader fell back to "the name's first
+    /// character", so <c>#\cr</c> read as <c>#\c</c> and <c>#\nl</c> as <c>#\n</c>,
+    /// which is what LilyPond's own <c>lily.scm</c> and <c>framework-ps.scm</c> spell.
+    /// </remarks>
+    private static int NamedCharacter(string name)
+    {
         switch (name.ToLowerInvariant())
         {
-            case "space": return SchemeChar.Get(' ');
-            case "newline": case "nl": case "linefeed": return SchemeChar.Get('\n');
-            case "tab": return SchemeChar.Get('\t');
-            case "return": return SchemeChar.Get('\r');
-            case "null": case "nul": return SchemeChar.Get(0);
-            case "alarm": return SchemeChar.Get(7);
-            case "backspace": return SchemeChar.Get(8);
-            case "delete": case "del": case "rubout": return SchemeChar.Get(127);
-            case "escape": case "esc": return SchemeChar.Get(27);
-            case "page": return SchemeChar.Get(12);
-            default:
-                // The hex forms, but only when EVERY digit is one. Parsing blind let a
-                // .NET FormatException out of the reader for #\xzz, and falling through
-                // to "first character of the name" was worse than either: #\nosuchchar
-                // answered #\n, a silently WRONG character rather than a refusal.
-                if ((name[0] == 'x' || name[0] == 'X' || name[0] == 'u' || name[0] == 'U')
-                    && name.Length > 1
-                    && IsHexDigits(name, 1))
-                {
-                    return SchemeChar.Get(int.Parse(
-                        name.Substring(1), NumberStyles.HexNumber, CultureInfo.InvariantCulture));
-                }
+            // R5RS.
+            case "space": return 0x20;
+            case "newline": return 0x0a;
 
-                // Upstream spells this one with a lower-case ~a where its neighbours use
-                // ~S; the inconsistency is upstream's and is reproduced, not tidied.
-                throw Error("unknown character name ~a", new MutableString(name));
+            // R6RS ('space' and 'newline' come from the R5RS list above).
+            case "nul": return 0x00;
+            case "alarm": return 0x07;
+            case "backspace": return 0x08;
+            case "tab": return 0x09;
+            case "linefeed": return 0x0a;
+            case "vtab": return 0x0b;
+            case "page": return 0x0c;
+            case "return": return 0x0d;
+            case "esc": return 0x1b;
+            case "delete": return 0x7f;
+
+            // R7RS.
+            case "escape": return 0x1b;
+
+            // The abbreviated names for the C0 control characters.
+            case "soh": return 0x01;
+            case "stx": return 0x02;
+            case "etx": return 0x03;
+            case "eot": return 0x04;
+            case "enq": return 0x05;
+            case "ack": return 0x06;
+            case "bel": return 0x07;
+            case "bs": return 0x08;
+            case "ht": return 0x09;
+            case "lf": return 0x0a;
+            case "vt": return 0x0b;
+            case "ff": return 0x0c;
+            case "cr": return 0x0d;
+            case "so": return 0x0e;
+            case "si": return 0x0f;
+            case "dle": return 0x10;
+            case "dc1": return 0x11;
+            case "dc2": return 0x12;
+            case "dc3": return 0x13;
+            case "dc4": return 0x14;
+            case "nak": return 0x15;
+            case "syn": return 0x16;
+            case "etb": return 0x17;
+            case "can": return 0x18;
+            case "em": return 0x19;
+            case "sub": return 0x1a;
+            case "fs": return 0x1c;
+            case "gs": return 0x1d;
+            case "rs": return 0x1e;
+            case "us": return 0x1f;
+            case "sp": return 0x20;
+            case "del": return 0x7f;
+
+            // The old names carried over for compatibility.
+            case "null": return 0x00;
+            case "nl": return 0x0a;
+            case "np": return 0x0c;
+
+            default: return -1;
         }
     }
 
-    private static bool IsHexDigits(string text, int start)
+    /// <summary>
+    /// Turns the digits of a numeric character escape into the character they name,
+    /// refusing a value that is not a Unicode code point the way upstream refuses it.
+    /// </summary>
+    /// <param name="name">The whole token that followed <c>#\</c>.</param>
+    /// <param name="start">The index of the first digit (past an <c>x</c> prefix).</param>
+    /// <param name="radix">8 for the octal form, 16 for the hex one.</param>
+    /// <returns>The character the escape names.</returns>
+    /// <remarks>
+    /// The refusal is <c>integer->char</c>'s <c>out-of-range</c> and NOT a read error,
+    /// because upstream's reader reaches the character through <c>integer->char</c>:
+    /// MEASURED, <c>#\xD800</c> answers
+    /// <c>In procedure integer-&gt;char: Argument 1 out of range: 55296</c>.
+    /// BigInteger rather than <see langword="int"/>: the digits are arbitrarily many,
+    /// and parsing them into a fixed width let an <c>OverflowException</c> — a .NET
+    /// exception, not a Scheme condition — out of the reader for <c>#\xffffffffff</c>,
+    /// which the oracle answers with that same out-of-range condition.
+    /// </remarks>
+    private object NumericCharacter(string name, int start, int radix)
     {
+        BigInteger value = BigInteger.Zero;
+        for (int i = start; i < name.Length; i++)
+        {
+            value = (value * radix) + Uri.FromHex(name[i]);
+        }
+
+        return Primitives.StringPrimitives.CodePointToChar(value);
+    }
+
+    private static bool IsDigitsOfRadix(string text, int start, int radix)
+    {
+        if (start >= text.Length)
+        {
+            return false;
+        }
+
         for (int i = start; i < text.Length; i++)
         {
-            if (!Uri.IsHexDigit(text[i]))
+            if (!Uri.IsHexDigit(text[i]) || Uri.FromHex(text[i]) >= radix)
             {
                 return false;
             }

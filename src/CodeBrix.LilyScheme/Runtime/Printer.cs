@@ -585,15 +585,117 @@ public static class Printer
 
     private static string WriteChar(SchemeChar c)
     {
-        switch (c.CodePoint)
+        // A GRAPHIC character writes as itself; anything else takes a name if it has
+        // one, and otherwise the octal escape upstream falls back to. "Graphic" is
+        // upstream's own test — the Unicode general categories L, M, N, P and S — and
+        // it is what keeps SPACE (category Zs) on the named path.
+        if (IsGraphic(c.CodePoint))
         {
-            case ' ': return "#\\space";
-            case '\n': return "#\\newline";
-            case '\t': return "#\\tab";
-            case '\r': return "#\\return";
-            case 0: return "#\\nul";
+            return "#\\" + c;
+        }
+
+        string name = CharacterName(c.CodePoint);
+        return name == null
+            ? "#\\" + Convert.ToString(c.CodePoint, 8)
+            : "#\\" + name;
+    }
+
+    private static bool IsGraphic(int codePoint)
+    {
+        if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff))
+        {
+            return false;
+        }
+
+        switch (CharUnicodeInfo.GetUnicodeCategory(char.ConvertFromUtf32(codePoint), 0))
+        {
+            case UnicodeCategory.UppercaseLetter:
+            case UnicodeCategory.LowercaseLetter:
+            case UnicodeCategory.TitlecaseLetter:
+            case UnicodeCategory.ModifierLetter:
+            case UnicodeCategory.OtherLetter:
+            case UnicodeCategory.NonSpacingMark:
+            case UnicodeCategory.SpacingCombiningMark:
+            case UnicodeCategory.EnclosingMark:
+            case UnicodeCategory.DecimalDigitNumber:
+            case UnicodeCategory.LetterNumber:
+            case UnicodeCategory.OtherNumber:
+            case UnicodeCategory.ConnectorPunctuation:
+            case UnicodeCategory.DashPunctuation:
+            case UnicodeCategory.OpenPunctuation:
+            case UnicodeCategory.ClosePunctuation:
+            case UnicodeCategory.InitialQuotePunctuation:
+            case UnicodeCategory.FinalQuotePunctuation:
+            case UnicodeCategory.OtherPunctuation:
+            case UnicodeCategory.MathSymbol:
+            case UnicodeCategory.CurrencySymbol:
+            case UnicodeCategory.ModifierSymbol:
+            case UnicodeCategory.OtherSymbol:
+                return true;
             default:
-                return "#\\" + c;
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// The name a character is WRITTEN with — the reader's five tables searched in the
+    /// same order, which is what decides between the several names one code point
+    /// answers to (0x0d is <c>return</c> and not <c>cr</c>; 0x0a is <c>newline</c> and
+    /// not <c>linefeed</c> or <c>lf</c>).
+    /// </summary>
+    /// <param name="codePoint">The character's code point.</param>
+    /// <returns>Its name, or <see langword="null"/> when it has none.</returns>
+    /// <remarks>
+    /// This half of the table was five names long while the reader's was twelve, so a
+    /// control character wrote as ITSELF — a raw byte in the middle of Scheme output.
+    /// MEASURED against the oracle: 0x01 is <c>#\soh</c>, 0x0b is <c>#\vtab</c>,
+    /// 0x7f is <c>#\delete</c>.
+    /// </remarks>
+    private static string CharacterName(int codePoint)
+    {
+        switch (codePoint)
+        {
+            // R5RS, then R6RS, then R7RS: the first name a code point answers to wins,
+            // so the duplicates below (esc, delete, nul ...) never reach the C0 row.
+            case 0x20: return "space";
+            case 0x0a: return "newline";
+            case 0x00: return "nul";
+            case 0x07: return "alarm";
+            case 0x08: return "backspace";
+            case 0x09: return "tab";
+            case 0x0b: return "vtab";
+            case 0x0c: return "page";
+            case 0x0d: return "return";
+            case 0x1b: return "esc";
+            case 0x7f: return "delete";
+
+            // The abbreviated C0 control names, for the code points no earlier table
+            // covers.
+            case 0x01: return "soh";
+            case 0x02: return "stx";
+            case 0x03: return "etx";
+            case 0x04: return "eot";
+            case 0x05: return "enq";
+            case 0x06: return "ack";
+            case 0x0e: return "so";
+            case 0x0f: return "si";
+            case 0x10: return "dle";
+            case 0x11: return "dc1";
+            case 0x12: return "dc2";
+            case 0x13: return "dc3";
+            case 0x14: return "dc4";
+            case 0x15: return "nak";
+            case 0x16: return "syn";
+            case 0x17: return "etb";
+            case 0x18: return "can";
+            case 0x19: return "em";
+            case 0x1a: return "sub";
+            case 0x1c: return "fs";
+            case 0x1d: return "gs";
+            case 0x1e: return "rs";
+            case 0x1f: return "us";
+
+            default: return null;
         }
     }
 
