@@ -113,6 +113,25 @@ public class SchemeReaderTests
     public void reads_a_string_with_escapes()
         => ReadOne("\"a\\nb\"").ToString().Should().Be("a\nb");
 
+    // The backslash-newline continuation, spelled with each of R7RS 7.1.1's three
+    // <line ending>s. Reading only LF made a CRLF checkout of a .scm file a read error
+    // -- "invalid character in escape sequence: #\return" -- the moment a string
+    // continued across a line, and scm/lily.scm's own relative-includes help text does
+    // precisely that, so a Windows clone under `core.autocrlf=true` loaded none of
+    // LilyPond's Scheme layer. The continuation eats the ending and the blanks that
+    // follow it, so all three spellings yield the same string.
+    [Theory]
+    [InlineData("\"a\\\nb\"")]
+    [InlineData("\"a\\\r\nb\"")]
+    [InlineData("\"a\\\rb\"")]
+    public void a_backslash_before_any_line_ending_continues_the_string(string source)
+        => ReadOne(source).ToString().Should().Be("ab");
+
+    [Fact]
+    public void a_continuation_skips_the_indentation_on_the_next_line()
+        // The blanks after the ending are the indentation of the source, not content.
+        => ReadOne("\"a\\\r\n    b\"").ToString().Should().Be("ab");
+
     [Fact]
     public void reads_a_string_with_a_four_digit_u_escape()
         // U+203F UNDERTIE — the exact spelling define-markup-commands.scm uses

@@ -558,9 +558,28 @@ public sealed class SchemeReader
                     builder.Append(char.ConvertFromUtf32(ReadFixedHexEscape(6)));
                     break;
 
+                case '\r':
                 case '\n':
                     // A backslash-newline continues the string, skipping leading blanks
                     // on the next line.
+                    //
+                    // ALL THREE LINE ENDINGS, not just LF. R7RS 7.1.1 spells <line
+                    // ending> as linefeed, return, or return followed by linefeed, so a
+                    // source with CRLF endings arrives here on the CR and its LF belongs
+                    // to the same ending rather than being a character of the string.
+                    // Reading only LF made every CRLF checkout of a .scm file a read
+                    // error the moment a string continued across a line -- and
+                    // LilyPond's own scm/lily.scm does exactly that, so a clone taken on
+                    // Windows under `core.autocrlf=true` failed on the FIRST file of the
+                    // Scheme layer with "invalid character in escape sequence: #\return"
+                    // and nothing loaded at all. `*.scm text eol=lf` is what keeps THIS
+                    // repository's vendored sources safe, but a consumer's file is not
+                    // ours to normalise, and the escape is legal input either way.
+                    if (escape == '\r' && !AtEnd && Peek() == '\n')
+                    {
+                        Advance();
+                    }
+
                     while (!AtEnd && (Peek() == ' ' || Peek() == '\t'))
                     {
                         Advance();
