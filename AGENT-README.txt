@@ -16,8 +16,8 @@ dependencies -- the whole implementation, including the vendored Guile Scheme it
 loads, ships inside one managed assembly as embedded resources.
 
 PROVENANCE. The Scheme source files this library loads are vendored VERBATIM
-from the GNU Guile source tree (audited revision v3.0.11-172-g472589569); the C#
-is new-in-family, written against R7RS, the SRFI documents and Guile's published
+from the GNU Guile source tree, at the audited revision recorded in
+THIRD-PARTY-NOTICES.txt; the C# is new-in-family, written against R7RS, the SRFI documents and Guile's published
 interfaces rather than translated from Guile's C. The library's own namespaces
 all start with CodeBrix.LilyScheme -- there are no Guile namespaces to use, and
 nothing to alias.
@@ -59,8 +59,10 @@ KEY NAMESPACES / USINGS
     using CodeBrix.LilyScheme.Caching;      // ExpansionCache, ExpansionCacheFile
     using CodeBrix.LilyScheme.Numeric;      // SchemeNumber, Ratio, ComplexNumber
     using CodeBrix.LilyScheme.Primitives;   // TypeChecks, SchemeHashTable, ports,
+                                            //   ColumnTrackingWriter,
                                             //   GOOPS classes, BuiltinClasses
-    using CodeBrix.LilyScheme.Reader;       // SchemeReader, SourceProperties
+    using CodeBrix.LilyScheme.Reader;       // SchemeReader, SourceProperties,
+                                            //   PortPosition
     using CodeBrix.LilyScheme.Runtime;      // SchemeBootstrap, Printer, Evaluator,
                                             //   SchemeModule, SchemeThrow
     using CodeBrix.LilyScheme.TreeIl;       // TreeIlEvaluator, TreeIlClosure
@@ -97,8 +99,10 @@ Three things in that snippet are not optional:
   An exception raised on that thread reaches the caller AS ITSELF, with its
   original stack trace, so catch clauses read exactly as they would without the
   thread.
-* TreeIlEvaluator.ExpandAndEval -- not Interpreter.Eval -- is what runs a form
-  through the macro expander. See the next section.
+* TreeIlEvaluator.ExpandAndEval is the EXPLICIT macro-expanding evaluator, and it
+  is what a form goes through when you hold the module yourself. Interpreter.Eval
+  and EvalString expand too, once psyntax is loaded; LoadFile and
+  LoadFileWithProgress never do. See the next section.
 
 CORE API REFERENCE
 ==================
@@ -120,21 +124,28 @@ tail calls. It exists so psyntax can be loaded. It DOES NOT EXPAND MACROS.
 Interpreter.TreeIlEvaluator is what everything else runs on. ExpandAndEval calls
 psyntax's macroexpand and evaluates the resulting Tree-IL.
 
-    Interpreter.Eval(form)                  -> core evaluator, no macros
-    Interpreter.EvalString(text, fileName)  -> core evaluator, no macros
-    Interpreter.LoadFile(path)              -> core evaluator, no macros
-    Interpreter.LoadFileWithProgress(...)   -> core evaluator, no macros
+    Interpreter.LoadFile(path)              -> core evaluator, NO macros
+    Interpreter.LoadFileWithProgress(...)   -> core evaluator, NO macros
 
+    Interpreter.Eval(form)                  -> full expansion once psyntax is loaded
+    Interpreter.EvalString(text, fileName)  -> full expansion once psyntax is loaded
     interpreter.TreeIlEvaluator.ExpandAndEval(form, module)   -> full expansion
     SchemeBootstrap.LoadExpanded(interpreter, source, name)   -> full expansion
 
-The four Interpreter methods are the BOOTSTRAP path and are exactly right for
-core-level forms; use them for anything that must run before or without psyntax.
+LoadFile and LoadFileWithProgress are the BOOTSTRAP path and are exactly right
+for core-level forms; use them for anything that must run before or without
+psyntax. Eval and EvalString go through psyntax as soon as IsPsyntaxLoaded is
+set, exactly as Guile's `eval' and `eval-string' do, and fall back to the core
+evaluator only before that -- so a macro defined by one EvalString is usable by
+the next, and a bare (markup ...) evaluates. See pitfalls 1 and 52.
+
 For ordinary consumer code -- anything containing `define-syntax', `when',
 `cond', `use-modules', `define-module', a syntax-rules macro or a vendored
-module -- use ExpandAndEval or LoadExpanded. A macro use handed to the core
-evaluator does not error at definition time; it fails later, where the macro is
-USED, as a wrong-type-arg saying the transformer cannot be applied.
+module -- use ExpandAndEval or LoadExpanded, which name the module explicitly, or
+Eval/EvalString when Interpreter.CurrentModule is already where you want the form
+to land. A macro use handed to the CORE evaluator does not error at definition
+time; it fails later, where the macro is USED, as a wrong-type-arg saying the
+transformer cannot be applied.
 
 THE HOST API: Interpreter
 =========================
@@ -173,19 +184,39 @@ EMBEDDING HOOKS
 
     object Eval(object form)
     object EvalString(string text, string fileName)
+        The EXPANDING entry points (see HOW EVALUATION WORKS): both run the form
+        through psyntax once it is loaded, and through the core evaluator only
+        before that. They evaluate in Interpreter.CurrentModule. EvalString reads
+        every form and answers the last value, or Unspecified.Instance when there
+        are none.
+
     object LoadFile(string path)
     object LoadFileWithProgress(string path, Action<int, object> onForm)
-        The core-evaluator entry points (see HOW EVALUATION WORKS). EvalString
-        reads every form and answers the last value, or Unspecified.Instance when
-        there are none. LoadFileWithProgress invokes onForm with the zero-based
-        form index and the form itself BEFORE evaluating it -- what you want when
-        loading a large file and needing to know which form failed.
+        The CORE-evaluator entry points, which never expand macros -- they are the
+        boot paths that load psyntax itself. LoadFileWithProgress invokes onForm
+        with the zero-based form index and the form itself BEFORE evaluating it --
+        what you want when loading a large file and needing to know which form
+        failed. For a consumer file, use SchemeBootstrap.LoadExpanded instead.
 
     TextWriter OutputWriter { get; set; }      // defaults to Console.Out
     TextWriter ErrorWriter { get; set; }       // defaults to Console.Error
     TextReader InputReader { get; set; }       // defaults to Console.In
         Behind display/write, warning output, and (current-input-port). Assign
         your own to capture or feed a run.
+
+    TextWriter TrackedOutputWriter()
+    TextWriter TrackedErrorWriter()
+        The position-tracking writers standing in front of OutputWriter and
+        ErrorWriter, created on first use and kept while the underlying writer is
+        unchanged. Everything written through the default output and error ports
+        goes through these, which is where port-line and port-column come from:
+        current-output-port builds a FRESH SchemeOutputPort on every call, so the
+        position cannot live on the port -- it would restart at zero each time --
+        and lives on the one shared writer instead. Assigning OutputWriter or
+        ErrorWriter is still the way to redirect; ask for the tracking writer only
+        when you want the position, or when you are writing where Scheme writes
+        and want the counters to stay honest. A writer that already tracks is
+        handed back as itself rather than wrapped again.
 
     List<string> LoadPath { get; }
         Directories searched by %search-load-path and primitive-load-path, and
@@ -290,10 +321,18 @@ READING SOURCE: SchemeReader AND SOURCE LOCATIONS
     int CurrentLine { get; }
     string SourceText { get; }
     string SourceFileName { get; }
+    int PortLine { get; set; }      // ZERO-based, as port-line reports it
+    int PortColumn { get; set; }    // as port-column reports it
     char PeekCharacter()
     char PeekCharacter(int offset)
     char ReadCharacterRaw()
+    void RetreatPosition(char value)
         The character-level surface a hash-extension handler works over.
+        PortLine and PortColumn are the counters a SchemeInputPort over this
+        reader reports, and they are SETTABLE because set-port-line! and
+        set-port-column! MOVE WHERE THE NEXT DATUM IS RECORDED. RetreatPosition
+        walks the position back over a character being pushed back, which is what
+        PushbackCharacter and unread-char need; ReadCharacterRaw advances it.
 
 READER EXTENSIONS
 -----------------
@@ -321,6 +360,12 @@ numeric tower including rectangular and polar complex literals, character names,
 and Guile's FIXED-WIDTH \uXXXX / \UXXXXXX string escapes (exactly four and six
 hex digits). The quote family -- ' ` , -- are SYMBOL CONSTITUENTS once a token is
 in progress: Hello' is one symbol, and quote syntax lives at datum start only.
+
+A backslash at the end of a line continues a string literal across the break and
+skips the leading blanks of the next line, and it accepts ALL THREE R7RS line
+endings -- linefeed, carriage return, and carriage return followed by linefeed.
+A consumer .scm file checked out or authored with CRLF endings therefore loads;
+it is not yours to normalise, and the escape is legal input either way.
 
 SOURCE LOCATIONS
 ----------------
@@ -568,6 +613,9 @@ HASH TABLES AND PORTS
         SchemeInputPort(TextReader stream, string fileName)
         TextReader Stream { get; }
         string FileName { get; }
+        string PortEncoding { get; set; }  // the reported name, e.g. "UTF-8"
+        long Line { get; set; }            // ZERO-based, as port-line reports it
+        long Column { get; set; }          // as port-column reports it
         bool IsFilePort { get; set; }
         bool IsClosed { get; set; }
         object ReadDatum()
@@ -580,7 +628,9 @@ HASH TABLES AND PORTS
     public sealed class SchemeOutputPort
         SchemeOutputPort(TextWriter writer)
         TextWriter Writer { get; set; }
+        TextWriter InnerWriter { get; }   // the sink under the tracking wrapper
         string FileName { get; set; }     // null for a non-file port
+        string PortEncoding { get; set; } // the reported name, e.g. "UTF-8"
         bool IsFilePort { get; }          // i.e. FileName != null
         bool IsClosed { get; set; }
 
@@ -591,6 +641,21 @@ A port constructed from a TextReader STREAMS. That is the pipe shape, and such a
 port REFUSES `read' loudly, because the datum reader works over a string and
 buffering a live pipe to end-of-stream would block on the producer. Construct
 from a string when Scheme code needs to `read' from the port.
+
+SchemeOutputPort.Writer is NOT a plain auto-property. What you assign is WRAPPED
+in a Primitives.ColumnTrackingWriter (unless it already tracks) so that port-line
+and port-column answer for every output port, and the position carries over when
+set-port-encoding! swaps the sink underneath a port that goes on existing. Read
+InnerWriter, not Writer, when the concrete sink is what you want -- the
+StringWriter a string port accumulates into, for instance, which is what
+get-output-string and ftell need.
+
+SchemeInputPort.Line and Column are the READER's own counters for a string-backed
+port rather than a second set kept alongside; a stream-backed port keeps its own.
+Both are settable, because set-port-line! and set-port-column! MOVE where the next
+datum's source location is recorded. PortEncoding is carried on both port kinds as
+a reported NAME: it is operative at the file boundary and nominal everywhere else,
+since strings are UTF-16 throughout.
 
 THE NUMERIC TOWER
 =================
@@ -644,9 +709,10 @@ representation including `int' (which primitives may produce).
 The COMPLEX parts are doubles, so a complex here is always inexact and PRINTS as
 such (1.0+2.0i -- pitfall 50); Guile's
 exact complexes are not modelled. An EXACT ZERO imaginary part collapses to the
-real in the reader -- 1+0i IS the exact integer 1, while 1.0+0.0i stays complex
--- and a product with an exact zero answers exact 0 whatever the other operand
-is. number? and complex? are the same predicate; real? and rational? are not.
+real in the reader -- 1+0i IS the exact integer 1, while 1.0+0.0i stays complex.
+A product involving a complex is COMPUTED and never short-circuited, so (* 0 z)
+is 0.0+0.0i and not an exact 0 (pitfall 50). number? and complex? are the same
+predicate; real? and rational? are not.
 
 CALLING SCHEME FROM C#
 ======================
@@ -761,6 +827,8 @@ library knowing about it.
 EXTENDING A GENERIC-CAPABLE PRIMITIVE
 -------------------------------------
     Primitives.PrimitiveGenerics.Enable(Primitive primitive) -> GenericFunction
+    Primitives.PrimitiveGenerics.NoApplicableMethod(
+        GenericFunction generic, string name, object[] arguments) -> SchemeThrow
 
 This is what Scheme's enable-primitive-generic! does: it hangs a generic off the
 PRIMITIVE OBJECT itself, so a method added from one module is visible from every
@@ -769,7 +837,9 @@ invisible from the defining module.
 
 DISPATCH ORDER IS GUILE'S (since 2026-08-28): arity first, then the PRIMITIVE, and
 only when the primitive's own type check fails does the call fall over to the
-attached generic -- SCM_WTA_DISPATCH_n. A method specialized on the primitive's own
+attached generic -- SCM_WTA_DISPATCH_n. NoApplicableMethod BUILDS that goops-error
+in Guile's exact shape and hands it back ready to raise, which is what a host
+dispatching a generic of its own should raise rather than inventing a message. A method specialized on the primitive's own
 domain (say <integer> on max) is therefore NEVER consulted for integers, and a
 generic with no applicable method raises (goops-error #f "No applicable method
 for ~S in call ~S" (GENERIC CALL) ()). The four arithmetic operators, the five
@@ -808,8 +878,14 @@ MODULES: SchemeModule, ModuleRegistry AND ModuleLoader
         Variable LookupLocal(Symbol name)
         Variable Lookup(Symbol name)
         Variable Define(Symbol name, object value)         // OWN cell
+        void DefinePublic(Symbol name, object value)       // Define + Export
         Variable EnsureVariable(Symbol name)
         long GenerateUniqueId()
+
+Define alone makes a PRIVATE binding under Guile's rules, so a module you provide
+from C# must DefinePublic every name it is meant to export -- otherwise the
+default (narrow) import delivers nothing and the names come out unbound. The
+library's own shim modules use it for exactly that reason.
 
 INSTALLING YOUR OWN MODULE LOADER
 ---------------------------------
@@ -914,8 +990,10 @@ OPENING FILES FROM SCHEME
 -------------------------
 open-input-file, call-with-input-file, call-with-port, get-string-all and
 get-string-n are core-side rather than in a module, which is the standing posture
-here: LilyScheme's scope is deliberately WIDER than Guile's per-module scope and
-never narrower. call-with-input-file and open-input-file take Guile's #:binary /
+here for the PLACEMENT of these procedures: they are reachable without a
+use-modules where Guile keeps them in ice-9/ports.scm. That is about where a name
+lives, not about what a use-modules imports -- imports are Guile's by default,
+see Interpreter.NarrowModuleImports and pitfall 20. call-with-input-file and open-input-file take Guile's #:binary /
 #:encoding / #:guess-encoding keywords, and #:encoding is load-bearing rather
 than decorative. open-output-file takes #:binary and #:encoding, and never writes
 a byte-order mark.
@@ -997,7 +1075,7 @@ CATCHING SCHEME ERRORS FROM C#
 ------------------------------
     namespace CodeBrix.LilyScheme.Runtime;
 
-    public sealed class SchemeThrow : Exception
+    public class SchemeThrow : Exception       // NOT sealed -- see below
         SchemeThrow(object key, object arguments)
         object Key { get; }                  // the throw key, a Symbol
         object Arguments { get; }            // the remaining throw arguments, a LIST
@@ -1007,8 +1085,9 @@ CATCHING SCHEME ERRORS FROM C#
         SchemeEvaluationException(string message)
         SchemeEvaluationException(string message, Exception innerException)
 
-    public sealed class SchemeReaderException : Exception   // namespace ...Reader
-        SchemeReaderException(string message)
+    public sealed class SchemeReaderException : SchemeThrow   // namespace ...Reader
+        SchemeReaderException(string message, object arguments)
+        string ReaderMessage { get; }        // the text, position prefix included
 
     public sealed class PromptAbort : Exception
         PromptAbort(object tag, object[] arguments)
@@ -1040,13 +1119,47 @@ goops-error, and %exception for a raise-exception of a plain object.
 
 SchemeEvaluationException is raised by SchemeBootstrap.LoadExpanded and LoadSource
 when a top-level form fails: its message names the file, the zero-based form index
-and the total, and the ORIGINAL failure is the InnerException. Catch SchemeThrow
-first if you want the structured error, then SchemeEvaluationException for the
-"which form of which file" context.
+and the total, and the ORIGINAL failure is the InnerException. It does NOT derive
+from SchemeThrow, so the two clauses are independent of each other in any order.
 
 SchemeReaderException is a syntax error in the source text -- a read-error
 condition, catchable from Scheme as well (pitfall 54). It comes out of
-SchemeReader.ReadAll before anything is evaluated.
+SchemeReader.ReadAll, and out of anything that reads (EvalString, LoadFile,
+LoadExpanded), before the offending text is evaluated. Its ReaderMessage is the
+text WITH the "NAME:LINE:COLUMN:" prefix and WITHOUT the throw wrapping, which is
+what you want to show a user.
+
+⚠ ORDER YOUR CATCH CLAUSES DERIVED-FIRST. SchemeReaderException DERIVES from
+SchemeThrow, so a `catch (SchemeThrow)' clause catches syntax errors too. Inside
+ONE try the compiler enforces the order for you (a SchemeThrow clause placed first
+makes the SchemeReaderException clause unreachable, CS0160); ACROSS LAYERS nothing
+does, so an outer `catch (SchemeThrow)' that reports "Scheme error" silently
+absorbs what was really a syntax error. Write it either way round:
+
+    try
+    {
+        SchemeBootstrap.LoadExpanded(interpreter, source, fileName);
+    }
+    catch (SchemeReaderException syntaxError)   // FIRST: the derived type
+    {
+        Report("Syntax error: " + syntaxError.ReaderMessage);
+    }
+    catch (SchemeThrow error)                   // then everything else Scheme threw
+    {
+        Report("Scheme error: " + error.Message);
+    }
+    catch (SchemeEvaluationException loadError)  // which form of which file
+    {
+        Report(loadError.Message);
+    }
+
+or, where one clause is all you want, branch on the key inside it -- a reader error
+is exactly the key read-error:
+
+    catch (SchemeThrow error)
+    {
+        bool isSyntaxError = (error.Key as Symbol)?.Name == "read-error";
+    }
 
 PromptAbort carries an abort-to-prompt out to the matching call-with-prompt.
 Do NOT swallow it in a C# primitive that calls back into Scheme: prompts here are
@@ -1353,6 +1466,29 @@ REMAINING RUNTIME TYPES
 
     Runtime.LoadDiagnostics
         The load-timing counters -- see PERFORMANCE TIPS.
+
+    Primitives.ColumnTrackingWriter : TextWriter
+        ColumnTrackingWriter(TextWriter inner)
+        TextWriter Inner { get; }
+        long Line { get; set; }   long Column { get; set; }
+        static TextWriter Wrap(TextWriter writer)     // no-op if already tracking
+        static TextWriter Unwrap(TextWriter writer)   // the sink underneath
+        The writer that makes port-line and port-column answer for an OUTPUT port.
+        Every write through it forwards to Inner and advances the position by the
+        same rules PortPosition applies. Interpreter.TrackedOutputWriter() and
+        SchemeOutputPort.Writer both produce one; SchemeOutputPort.InnerWriter is
+        Unwrap. You will meet it in a stack trace and in a debugger watch on a
+        writer you thought you had assigned directly.
+
+    Reader.PortPosition
+        static void Advance(ReadOnlySpan<char> text, ref long line, ref long column)
+        static void Advance(char value, ref long line, ref long column)
+        static void Retreat(char value, ref long line, ref long column)
+        The one place the position rules live, shared by every port and by the
+        reader, so all of them agree: a newline advances the line and zeroes the
+        column, a carriage return zeroes the column without advancing the line, a
+        tab advances to the next multiple of eight, a backspace retreats but never
+        below zero, and a column counts CODE POINTS. See pitfall 53.
 
 WHAT THE SCHEME LAYER GIVES YOU
 ===============================
@@ -2023,8 +2159,9 @@ WRITING SCHEME AGAINST THIS IMPLEMENTATION
     accepted here and give the same "Not an array" a missing name would.
 
 34. AN EXACT ZERO IMAGINARY PART COLLAPSES IN THE READER. 1+0i IS the exact
-    integer 1, while 1.0+0.0i stays complex; a product with an exact zero answers
-    exact 0 whatever the other operand is. And a token ENDING in '@' is not a
+    integer 1, while 1.0+0.0i stays complex. A product involving a complex is
+    COMPUTED rather than short-circuited -- see pitfall 50, (* 0 z) is 0.0+0.0i.
+    And a token ENDING in '@' is not a
     polar literal -- psyntax's own source contains such symbols -- so both sides
     of the '@' must exist before either is parsed.
 
@@ -2109,8 +2246,8 @@ PORTS, FILES AND THE OUTSIDE WORLD
     path (every psyntax-expanded procedure) bound a MISSING required parameter
     to #<unspecified> and DROPPED surplus arguments, and the body ran anyway;
     only the core evaluator's closures and primitives had ever checked. Found
-    through LilyPond: scores calling unfold-repeats with its pre-2.23 arity
-    engraved where 2.27.2 refuses the file. A case-lambda with no fitting
+    through LilyPond: scores calling unfold-repeats with its older arity
+    engraved where the pinned oracle refuses the file. A case-lambda with no fitting
     clause names ITSELF in the error, not its last arm; #:optional still
     defaults to #f, a rest parameter still takes any count, and a #:key clause
     has no positional ceiling (its tail is keyword/value pairs). Fenced by
@@ -2124,7 +2261,7 @@ PORTS, FILES AND THE OUTSIDE WORLD
     (+ 3 "x")) ()) -- generic object, the failing PAIR for the pairwise operators,
     EMPTY LIST data. //was previously: method-first with the primitive as the
     fallback, which charged a method-selection pass to every arithmetic call and
-    surfaced a type failure as wrong-type-arg. MEASURED on the pinned 2.27.2:
+    surfaced a type failure as wrong-type-arg. MEASURED on the pinned oracle:
     (define-method (max (a <integer>) (b <integer>)) ...) leaves (max 1 2) = 2.
     A primitive's arity error is the VM's shape too: (wrong-number-of-args #f
     "Wrong number of arguments to ~A" (#<procedure abs (_)>) #f). Fenced by
@@ -2196,7 +2333,7 @@ PORTS, FILES AND THE OUTSIDE WORLD
     it finds the wrapper and answers empty; and set-port-column! / set-port-line!
     are REAL SETTERS now rather than the no-ops they were, because on the oracle
     (set-port-column! p 42) makes the next character land at 43.
-    THE UPDATE RULES, every one MEASURED on the pinned 2.27.2 rather than read off
+    THE UPDATE RULES, every one MEASURED on the pinned oracle rather than read off
     Guile's source: a newline advances the line and zeroes the column; a CARRIAGE
     RETURN zeroes the column WITHOUT advancing the line; a TAB advances to the next
     multiple of eight (columns 0, 1 and 7 all become 8; 8 and 9 become 16); a
@@ -2407,8 +2544,11 @@ PORTS, FILES AND THE OUTSIDE WORLD
 WHAT THIS PACKAGE DOES NOT DO
 =============================
 It is not a general-purpose Guile replacement. It implements the subset of Guile
-that LilyPond's Scheme layer needs, and its visible scope is in places WIDER than
-Guile's rather than narrower. Specifically, none of the following exists:
+that LilyPond's Scheme layer needs. A use-modules imports what Guile's does (see
+pitfall 20), but a handful of procedures Guile keeps in a module -- the file and
+port openers named under OPENING FILES FROM SCHEME -- are placed CORE-side here
+and so are reachable without importing anything. Specifically, none of the
+following exists:
 
 * NO VM, NO COMPILER, NO BYTECODE. Everything is interpreted. The
   (system vm program) shim answers #f from program? for every value. There are no
@@ -2557,7 +2697,8 @@ QUICK REFERENCE CARD
 
     EVALUATE  i.TreeIlEvaluator.ExpandAndEval(form, i.CurrentModule)  // macros
               SchemeBootstrap.LoadExpanded(i, source, fileName)       // macros
-              i.Eval / i.EvalString / i.LoadFile                      // NO macros
+              i.Eval / i.EvalString            // macros, once psyntax is loaded
+              i.LoadFile / i.LoadFileWithProgress            // NO macros, ever
 
     READ      SchemeReader.ReadAll(text, fileName) -> List<object>
               SchemeReader.RegisterHashExtension('c', reader => ...)

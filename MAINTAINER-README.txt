@@ -23,7 +23,18 @@ loads more than ninety vendored .scm files on top of it.
 
 REPOSITORY LAYOUT
 =================
-    CodeBrix.LilyScheme.slnx                the solution
+    CodeBrix.LilyScheme.slnx                the solution. Its Solution Items
+                                            folder carries .gitattributes,
+                                            .gitignore, AGENT-README.txt,
+                                            EXTRAS-README.txt, global.json,
+                                            icon-codebrix-128.png, LICENSE,
+                                            LICENSE.GPL, MAINTAINER-README.txt,
+                                            README-INDEX.txt, README.md and
+                                            THIRD-PARTY-NOTICES.txt; its Tests
+                                            folder carries the test project
+    global.json                             selects the Microsoft.Testing.Platform
+                                            test runner. It does NOT pin an SDK
+                                            version -- see TESTING
     src/CodeBrix.LilyScheme/                the library (the only packable project)
     tests/CodeBrix.LilyScheme.Tests/        the xUnit v3 suite
     tools/unicode-names/                    the Unicode-table generator (see EXTRAS)
@@ -84,6 +95,28 @@ TESTING
 The suite is long-running by design. Consumers are told not to run it; a
 maintainer runs it before any change ships.
 
+THE TEST RUNNER IS Microsoft.Testing.Platform (MTP), selected by global.json at
+the repo root:
+
+    { "test": { "runner": "Microsoft.Testing.Platform" } }
+
+Because that setting lives in global.json rather than in the test csproj, it
+applies to every `dotnet test' run anywhere in the repository, including CI. Keep
+the file committed. global.json does NOT pin an SDK version, so the newest
+installed .NET 10 SDK is still the one used; selecting the runner is the file's
+only job. Without it, `dotnet test' falls back to the older VSTest bridge, and
+this repository's test-package combination discovers ZERO tests through that
+bridge -- a run that reports nothing to do and exits 0, which reads as success.
+You can tell which one ran: MTP output ends in a "Test run summary:" block, while
+the VSTest bridge invokes MSBuild with `--target:VSTest'. If a run reports no
+tests, check global.json before anything else. The suite's built executable can
+also be launched directly, which bypasses the question entirely.
+
+Test dependencies (tests/CodeBrix.LilyScheme.Tests): xunit.v3,
+xunit.runner.visualstudio, Microsoft.NET.Test.Sdk and
+SilverAssertions.ApacheLicenseForever. There is no coverage collector in this
+repository.
+
 Tests that evaluate Scheme MUST run inside Interpreter.RunWithLargeStack --
 psyntax will overflow the default stack otherwise. A failure on the big-stack
 thread reaches the caller AS ITSELF, with its original stack trace, so assertions
@@ -93,8 +126,8 @@ message behind a generic one, which made a whole class of failure look like a
 single unknown cause.
 
 Test conventions: xUnit v3 plus SilverAssertions fluent assertions
-(x.Should().Be(y)), coverlet.collector for coverage, one <Class>Tests.cs per
-fenced area, snake_case test method names, //Arrange //Act //Assert comments, and
+(x.Should().Be(y)), one <Class>Tests.cs per fenced area, snake_case test method
+names, //Arrange //Act //Assert comments, and
 TestContext.Current.CancellationToken threaded through any call that accepts a
 CancellationToken.
 
@@ -110,6 +143,16 @@ WHAT EACH TEST CLASS FENCES
                             character spells a VALID escape and would otherwise
                             read clean as a DIFFERENT path, with the raw \U splice
                             fenced as the control
+    ReadErrorTests          the reader's ERROR surface: a syntax error arriving as
+                            a read-error CONDITION that (catch 'read-error ...)
+                            and (catch #t ...) both see, upstream's wording and its
+                            NAME:LINE:COLUMN: position format, the port naming
+                            ("#<unknown port>" when there is none), and the four
+                            malformed inputs the reader used to ACCEPT
+    ExternalRepresentationTests  what a value writes as, character for character:
+                            bytevectors, the #{...}# symbol syntax and its escaping
+                            table, array rank 0 / rank 1 / ragged literals, and the
+                            character-name table the printer writes with
     InterpreterTests        the core evaluator without psyntax -- arithmetic,
                             closures, tail calls, letrec, lambda*, hash tables,
                             catch/throw, and the throw-handler contract:
@@ -121,6 +164,13 @@ WHAT EACH TEST CLASS FENCES
                             Tree-IL, syntax-rules runs, macro expansion is
                             HYGIENIC, and the vendored srfi-1 and ice-9 match both
                             load and work
+    EvalExpansionTests      that eval, eval-string, Interpreter.Eval and
+                            Interpreter.EvalString all EXPAND once psyntax is
+                            loaded: a macro defined by one eval-string is usable by
+                            the next, a bare (markup ...) from an explicit module
+                            evaluates rather than failing as a syntax-transformer
+                            application, and the pre-psyntax fallback to the core
+                            evaluator still works
     GuileCompatibilityTests the surface beyond psyntax: module autoloading,
                             quasisyntax (including a tail unsyntax), the
                             non-finite reals, SRFI-13 strings, SRFI-14 character
@@ -182,6 +232,13 @@ WHAT EACH TEST CLASS FENCES
                             codec (latin1 octets leave one byte each), the
                             opendir / readdir / closedir / rmdir / delete-file
                             family, and read-char / peek-char
+    PortPositionTests       port-line / port-column on EVERY kind of port, input
+                            and output, and set-port-line! / set-port-column! as
+                            REAL setters; the tab, carriage-return, backspace,
+                            alarm and code-point update rules; peek and unread
+                            walking the position back; a datum's source location
+                            and the #{ #} synchronisation that MOVES it; and
+                            pretty-print's line breaking, which stands on all of it
     ExpansionCacheTests     the cache's four rules: c&e recording without
                             re-evaluation, per-interpreter deserialization,
                             identity-preserving round-trips, and corruption always
@@ -210,6 +267,14 @@ WHAT EACH TEST CLASS FENCES
                             dies in the size_t conversion with subr #f
     ComplexNumberTests      the complex literals, arithmetic and accessors,
                             including the exact-zero collapse
+    GuileNumericErrorShapeTests  the numeric family's wrong-type-arg in Guile's
+                            template shape at Guile's positions, every row MEASURED
+                            on the pinned oracle rather than reasoned about: the
+                            reproduced quirks ((* 1 "x"), (< "x"), the comparison
+                            short-circuit, expt failing inside *), inexact integers
+                            accepted exactly where Guile accepts them, the complex
+                            refusals, and no host exception escaping any numeric
+                            site
     UnicodeNameTests        char->formal-name / formal-name->char against the
                             Unicode Character Database's own contents, including
                             answering #f for algorithmically named CJK and Hangul
@@ -256,12 +321,18 @@ WHAT EACH TEST CLASS FENCES
                             one in a HOST-registered primitive), the net's
                             selectivity (a primitive's own SchemeThrow passes
                             untouched), and the well-typed controls
+    WrongNumberOfArgumentsTests  arity on the Tree-IL path, which used to be
+                            unchecked: too few and too many arguments raising
+                            wrong-number-of-args in the VM's shape, the report text
+                            character for character, a case-lambda with no fitting
+                            clause naming ITSELF rather than its last arm, and
+                            #:optional / rest / #:key clauses left unaffected
     RecordInheritanceTests  Guile's single-inheritance record model: parent fields
                             laid out first, subtype-accepting predicates, the
                             "parent type is final" refusal, (immutable name) specs
                             refusing a modifier, the struct view of a record, and
                             the default-record-printer rendering
-    NarrowImportTests       the Interpreter.NarrowModuleImports OPT-IN switch from
+    NarrowImportTests       the Interpreter.NarrowModuleImports switch from
                             both positions: exported names arrive and private ones
                             do not, the interface view is LIVE (later exports
                             arrive) and shares variable cells (set! works through
@@ -393,6 +464,17 @@ Two layers hold it, and both are load-bearing:
   string literal would be the same class of quiet corruption. SmokeTests sweeps
   every resource.
 
+A THIRD layer stands behind those two, and it is the CONSUMER's: the reader itself
+accepts all three R7RS line endings at a backslash line continuation inside a
+string literal -- LF, CR, and CR followed by LF, with the CRLF pair consumed as
+one ending. That was added 2026-08-31. Both layers above govern OUR vendored
+files; a consumer's .scm is not ours to normalise, and reading only LF made every
+CRLF checkout of a consumer file a read error the moment a string continued across
+a line, failing on the FIRST file with "invalid character in escape sequence:
+#\return" and loading nothing at all. Do not "tighten" the reader back to LF: the
+two layers above are about the ARTIFACT, this one is about INPUT, and they are not
+substitutes for each other.
+
 The LGPL compliance obligations documented in
 ~/GitHome/CodeBrix.Library.Dev-private/info/LGPL_GUIDANCE.txt apply.
 
@@ -427,9 +509,9 @@ CODING CONVENTIONS
   CS1591 is fixed at the source, never suppressed.
 * No project-level warning suppression (<NoWarn>, <WarningLevel>0</WarningLevel>,
   <TreatWarningsAsErrors>false</...>) on any csproj in this repo.
-* Tests: xUnit v3, SilverAssertions, coverlet.collector, and
+* Tests: xUnit v3 and SilverAssertions, with
   TestContext.Current.CancellationToken threaded through anything that takes a
-  CancellationToken.
+  CancellationToken. No coverage collector is referenced.
 
 THE PORT'S OWN LORE
 ===================
@@ -504,8 +586,10 @@ The same applies to Guile's port procedures, which live in ice-9/ports.scm and
 ice-9/textual-ports.scm rather than in boot-9 and are likewise not loaded.
 open-input-file, call-with-input-file, call-with-port, get-string-all and
 get-string-n are implemented in Primitives/PortPrimitives.cs, core-side rather
-than in a module, which is the standing posture here: this library's scope is
-deliberately WIDER than Guile's per-module scope and never narrower.
+than in a module, which is the standing posture here for the PLACEMENT of these
+procedures: they are reachable without a use-modules. That is about where a name
+lives, not about what a use-modules imports -- imports are Guile's by default, see
+THE IMPORT SIDE below.
 
 quasisyntax is NOT part of psyntax. Guile pulls it into the core environment from
 boot-9.scm line 424; the prelude does the same include, because #` templates are
@@ -550,14 +634,25 @@ than DERIVING its algorithmic name -- that is Guile's behaviour, measured agains
 characters in a reference corpus, all 316 agreeing including the one negative.
 Python's unicodedata does the opposite; do not "fix" it.
 
-THE IMPORT-SIDE DIVERGENCE, AND THE EXPERIMENT THAT WAS REVERTED
-----------------------------------------------------------------
-By DEFAULT a use-modules WITHOUT #:select puts the WHOLE module on the use list
-rather than its public interface, so visible scope is WIDER than Guile's, never
-narrower -- the behaviour the consuming LilyPond layer's module world was verified
-under. Interpreter.NarrowModuleImports = true closes it. NarrowImportTests fences
-both positions of the switch. FLIPPING THE DEFAULT still wants a session that can
-sweep the consuming layer behind it.
+THE IMPORT SIDE: THE DEFAULT, AND THE EXPERIMENT THAT WAS REVERTED
+-------------------------------------------------------------------
+By DEFAULT a use-modules WITHOUT #:select imports the module's PUBLIC INTERFACE,
+which is Guile's own rule: Interpreter.NarrowModuleImports is TRUE. Setting it
+FALSE -- before the code it governs is loaded -- puts the WHOLE module on the use
+list instead, private names included. That WIDE import is a COMPATIBILITY CHOICE,
+and it is the one CodeBrix.LilyPort makes explicitly, until its own corpus has
+been swept behind the narrow default. NarrowImportTests fences both positions.
+
+The wide import was the default for most of the project's life, and flipping it
+paid immediately, because the wide import had been HIDING real defects. Two came
+out the first time the narrow position was tried: define-module clause keywords
+spelled as keyword-like SYMBOLS (`:export', srfi-1's own spelling) were silently
+skipped, so srfi-1's export list went unrecorded; and the five C#-provided shim
+modules only Defined their names rather than exporting them, so make-soft-port
+and its kin were unbound the moment an interface was consulted rather than the
+whole module. Both are fixed, and SchemeModule.DefinePublic (Define plus Export)
+exists for the second -- a shim module added from C# must use it for every name
+its Guile counterpart exports, or the name is private under the default.
 
 WHEN TWO IMPORTS BIND ONE NAME, THE FIRST IMPORT WINS -- A MEASURED DIVERGENCE,
 KEPT. Guile's duplicate-binding handlers (default chain

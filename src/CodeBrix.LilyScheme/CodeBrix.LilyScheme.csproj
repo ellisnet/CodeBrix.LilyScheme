@@ -53,7 +53,7 @@
     <Product>CodeBrix.LilyScheme</Product>
     <Title>CodeBrix.LilyScheme</Title>
     <Authors>Jeremy Ellis</Authors>
-    <Description>A limited, managed, cross-platform Scheme language implementation for .NET, derived from the GNU Guile project.</Description>
+    <Description>A managed, cross-platform Scheme language implementation for .NET, with full syntax-case macro expansion, a module system, generic functions, the complete numeric tower, ports and a POSIX surface - embeddable from C# with no native dependencies.</Description>
     <PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.LilyScheme</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ellisnet/CodeBrix.LilyScheme</RepositoryUrl>

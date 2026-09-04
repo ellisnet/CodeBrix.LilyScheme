@@ -27,5 +27,7 @@ GENERAL
 -------
   README.md
       Human-facing overview shown on GitHub and nuget.org.
+  THIRD-PARTY-NOTICES.txt
+      What came from where, and under which licences.
   README-INDEX.txt
       This file.

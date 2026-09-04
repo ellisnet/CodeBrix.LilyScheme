@@ -7,6 +7,7 @@
     <File Path="global.json" />
     <File Path="icon-codebrix-128.png" />
     <File Path="LICENSE" />
+    <File Path="LICENSE.GPL" />
     <File Path="MAINTAINER-README.txt" />
     <File Path="README-INDEX.txt" />
     <File Path="README.md" />
