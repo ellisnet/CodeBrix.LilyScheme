@@ -32,6 +32,11 @@ namespace CodeBrix.LilyScheme.Tests;
 /// line, a backspace retreats one but never past zero, an alarm advances nothing, and a
 /// column counts CODE POINTS, so two astral characters make column two and not four.
 /// </para>
+/// <para>
+/// The <c>set-port-filename!</c> cases at the end are the exception: their expectations
+/// follow <c>libguile/ports.c</c> (scm_set_port_filename_x changes only the name) and are
+/// NOT oracle readings, and refusing a non-string name is this implementation's choice.
+/// </para>
 /// </summary>
 public class PortPositionTests
 {
@@ -464,5 +469,120 @@ public class PortPositionTests
 
         //Assert
         result.Should().Be("(\"abc\" \"\" 3)");
+    }
+
+    [Fact]
+    public void set_port_filename_names_a_string_input_port_without_making_it_a_file_port()
+    {
+        //Arrange
+        // A string port has NO name (port-filename answers #f), and set-port-filename! gives
+        // it one, as Guile allows. It changes only the name: the port is still not a file
+        // port. CONTROL: an unrenamed string port still answers #f.
+        //Act
+        string result = Eval(
+            "(define p (open-input-string \"(alpha beta)\"))",
+            "(define before (port-filename p))",
+            "(set-port-filename! p \"real.ly\")",
+            "(list before (port-filename p) (file-port? p)"
+            + " (port-filename (open-input-string \"x\")))");
+
+        //Assert
+        result.Should().Be("(#f \"real.ly\" #f #f)");
+    }
+
+    [Fact]
+    public void set_port_filename_is_recorded_in_the_source_properties_of_later_datums()
+    {
+        //Arrange
+        // The reason the name matters beyond port-filename: an input port's reader records
+        // it as the filename of every datum read afterwards, the same way set-port-line!
+        // moves the recorded line. CONTROL: the same text read without the rename records #f.
+        //Act
+        string result = Eval(
+            "(define (filename-of text name)"
+            + " (let ((p (open-input-string text)))"
+            + "  (if name (set-port-filename! p name))"
+            + "  (assq-ref (source-properties (read p)) 'filename)))",
+            "(list (filename-of \"(alpha beta)\" \"real.ly\")"
+            + " (filename-of \"(alpha beta)\" #f))");
+
+        //Assert
+        result.Should().Be("(\"real.ly\" #f)");
+    }
+
+    [Fact]
+    public void set_port_filename_with_false_clears_the_name_again()
+    {
+        //Arrange
+        //Act
+        string result = Eval(
+            "(define p (open-input-string \"x\"))",
+            "(set-port-filename! p \"named.scm\")",
+            "(define named (port-filename p))",
+            "(set-port-filename! p #f)",
+            "(list named (port-filename p))");
+
+        //Assert
+        result.Should().Be("(\"named.scm\" #f)");
+    }
+
+    [Fact]
+    public void set_port_filename_names_a_string_output_port_without_making_it_a_file_port()
+    {
+        //Arrange
+        // CONTROL: the output string port's text is untouched by the rename.
+        //Act
+        string result = Eval(
+            "(define p (open-output-string))",
+            "(define before (port-filename p))",
+            "(set-port-filename! p \"out.txt\")",
+            "(display \"abc\" p)",
+            "(list before (port-filename p) (file-port? p) (get-output-string p))");
+
+        //Assert
+        result.Should().Be("(#f \"out.txt\" #f \"abc\")");
+    }
+
+    [Fact]
+    public void set_port_filename_on_an_output_file_port_changes_only_the_reported_name()
+    {
+        //Arrange
+        // An output port's FileName is the file actually written (file-port? and
+        // set-port-encoding! both use it), so the rename must not redirect the bytes.
+        string path = Path.Combine(
+            Path.GetTempPath(), "lilyscheme-port-" + Guid.NewGuid().ToString("N") + ".txt");
+        try
+        {
+            //Act
+            string result = Eval(
+                "(define p (open-output-file " + Printer.WriteString(path) + "))",
+                "(set-port-filename! p \"reported.txt\")",
+                "(display \"abc\" p)",
+                "(define answers (list (port-filename p) (file-port? p)))",
+                "(close-port p)",
+                "answers");
+
+            //Assert
+            result.Should().Be("(\"reported.txt\" #t)");
+            File.ReadAllText(path).Should().Be("abc");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void set_port_filename_refuses_a_non_port_and_a_non_string_name()
+    {
+        //Arrange
+        //Act
+        string result = Eval(
+            "(define (key-of thunk) (catch #t thunk (lambda (key . args) key)))",
+            "(list (key-of (lambda () (set-port-filename! 42 \"x\")))"
+            + " (key-of (lambda () (set-port-filename! (open-input-string \"x\") 42))))");
+
+        //Assert
+        result.Should().Be("(wrong-type-arg wrong-type-arg)");
     }
 }

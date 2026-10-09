@@ -898,7 +898,53 @@ public static class GuileCorePrimitives
 
             return Unspecified.Instance;
         });
-        interpreter.DefinePrimitive("set-port-filename!", 2, 2, a => Unspecified.Instance);
+        // (set-port-filename! port name) -- libguile/ports.c's scm_set_port_filename_x. Only
+        // the NAME changes: port-filename answers it afterwards, and on an input port the
+        // reader records it in the source-properties of every datum read from then on and
+        // names it in read errors. The port's data and its kind do not change, so a string
+        // port that is given a name still answers #f to file-port?. A string port gets the
+        // name rather than refusing it, because Guile allows exactly that (and LilyPond's
+        // embedded-Scheme ports are string ports synced to their real source). Guile
+        // validates an OPEN port and stores any object; here the name must be a string, or
+        // #f to clear it, since a name is text everywhere this implementation renders it.
+        interpreter.DefinePrimitive("set-port-filename!", 2, 2, a =>
+        {
+            bool isOpenPort = a[0] switch
+            {
+                SchemeInputPort input => !input.IsClosed,
+                SchemeOutputPort output => !output.IsClosed,
+                _ => false,
+            };
+            if (!isOpenPort)
+            {
+                throw TypeChecks.WrongType(a[0], "set-port-filename!", 1);
+            }
+
+            string name;
+            if (a[1] is false)
+            {
+                name = null;
+            }
+            else if (a[1] is MutableString text)
+            {
+                name = text.ToString();
+            }
+            else
+            {
+                throw TypeChecks.WrongType(a[1], "set-port-filename!", 2);
+            }
+
+            if (a[0] is SchemeInputPort inputPort)
+            {
+                inputPort.Rename(name);
+            }
+            else
+            {
+                ((SchemeOutputPort)a[0]).Rename(name);
+            }
+
+            return Unspecified.Instance;
+        });
         interpreter.DefinePrimitive("drain-input", 1, 1, a => new MutableString(string.Empty));
 
         interpreter.DefinePrimitive("ftell", 1, 1, a =>

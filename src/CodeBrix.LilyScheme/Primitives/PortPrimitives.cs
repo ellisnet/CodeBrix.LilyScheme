@@ -56,8 +56,28 @@ public sealed class SchemeInputPort
     /// </summary>
     public TextReader Stream => _stream;
 
-    /// <summary>Gets the name reported for this port.</summary>
-    public string FileName { get; }
+    /// <summary>
+    /// Gets the name reported for this port: what <c>port-filename</c> answers, what a read
+    /// error names, and what a datum's <c>source-properties</c> record as its filename.
+    /// </summary>
+    /// <remarks>
+    /// <c>set-port-filename!</c> changes it (see <see cref="Rename"/>). It is only a NAME:
+    /// it does not decide whether this is a file port (<see cref="IsFilePort"/> does) and
+    /// does not change where the characters come from.
+    /// </remarks>
+    public string FileName { get; private set; }
+
+    /// <summary>
+    /// Changes the name this port reports, as Guile's <c>set-port-filename!</c> does: the
+    /// next <c>port-filename</c>, read error and recorded source location all use it, while
+    /// the port's data source and <see cref="IsFilePort"/> stay as they were.
+    /// </summary>
+    /// <param name="fileName">The new name, or <see langword="null"/> to report none.</param>
+    internal void Rename(string fileName)
+    {
+        FileName = fileName;
+        _reader?.Rename(fileName);
+    }
 
     /// <summary>
     /// Gets or sets the name this port reports for its encoding, upper-cased as
@@ -375,6 +395,32 @@ public sealed class SchemeOutputPort
 
     /// <summary>Gets a value indicating whether this port writes a FILE.</summary>
     public bool IsFilePort => FileName != null;
+
+    private bool _isRenamed;
+    private string _reportedFileName;
+
+    /// <summary>
+    /// Gets the name <c>port-filename</c> answers for this port: the name given by
+    /// <c>set-port-filename!</c> once one has been, otherwise <see cref="FileName"/>.
+    /// </summary>
+    /// <remarks>
+    /// Kept apart from <see cref="FileName"/> on purpose. For an output port FileName is the
+    /// file actually being written -- <see cref="IsFilePort"/> answers from it and
+    /// <c>set-port-encoding!</c> reopens it -- whereas Guile's <c>set-port-filename!</c>
+    /// changes only the reported name, never the port's data sink or its kind.
+    /// </remarks>
+    public string ReportedFileName => _isRenamed ? _reportedFileName : FileName;
+
+    /// <summary>
+    /// Changes the name this port reports, backing <c>set-port-filename!</c>. Does not change
+    /// <see cref="FileName"/>, the file written, or <see cref="IsFilePort"/>.
+    /// </summary>
+    /// <param name="fileName">The new name, or <see langword="null"/> to report none.</param>
+    internal void Rename(string fileName)
+    {
+        _reportedFileName = fileName;
+        _isRenamed = true;
+    }
 
     /// <summary>Gets or sets a value indicating whether the port has been closed.</summary>
     public bool IsClosed { get; set; }
@@ -1075,8 +1121,8 @@ public static class PortPrimitives
             {
                 case SchemeInputPort input when input.FileName != null:
                     return new MutableString(input.FileName);
-                case SchemeOutputPort output when output.IsFilePort:
-                    return new MutableString(output.FileName);
+                case SchemeOutputPort output when output.ReportedFileName != null:
+                    return new MutableString(output.ReportedFileName);
                 default:
                     return false;
             }

@@ -26,7 +26,7 @@ XML documentation (IntelliSense) ships alongside the assembly.
 
 The package has no NuGet dependencies and no native libraries - the whole implementation, including the Scheme source it loads at bootstrap, ships inside one managed assembly as embedded resources. It depends only on the .NET base class library, and runs on Windows, Linux and macOS.
 
-**Read the License section below before taking this dependency.** Unlike the rest of the CodeBrix family, this package is copyleft: LGPL-3.0-or-later permits linking from a differently-licensed application, but it attaches conditions - notably that your recipients must be able to relink your application against a modified build of this library, so it must not be ILMerged, ILRepack'd or shipped only as a trimmed or single-file artifact from which it cannot be replaced. If your project cannot accept those conditions, do not reference this package.
+**Read the License section below before taking this dependency.** Unlike most of the CodeBrix family, this package is copyleft: LGPL-3.0-or-later permits linking from a differently-licensed application, but it attaches conditions - notably that your recipients must be able to relink your application against a modified build of this library, so it must not be ILMerged, ILRepack'd or shipped only as a trimmed or single-file artifact from which it cannot be replaced. If your project cannot accept those conditions, do not reference this package.
 
 ## CodeBrix.LilyScheme supports:
 

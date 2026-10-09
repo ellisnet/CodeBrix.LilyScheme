@@ -27,7 +27,7 @@ public sealed class SchemeReader
     private const char DottedCircle = '◌';
 
     private readonly string _text;
-    private readonly string _fileName;
+    private string _fileName;
     private int _position;
     private int _line;
     private int _column;
@@ -124,6 +124,14 @@ public sealed class SchemeReader
 
     /// <summary>Gets the file name used in error messages.</summary>
     public string SourceFileName => _fileName ?? "<unknown>";
+
+    /// <summary>
+    /// Changes the name this reader records in source locations and reports in read
+    /// errors from here on, backing <c>set-port-filename!</c> on the port that owns it.
+    /// Datums already read keep the name they were recorded with.
+    /// </summary>
+    /// <param name="fileName">The new name, or <see langword="null"/> for none.</param>
+    internal void Rename(string fileName) => _fileName = fileName;
 
     /// <summary>Gets the current line number, counting from one.</summary>
     public int CurrentLine => _line;

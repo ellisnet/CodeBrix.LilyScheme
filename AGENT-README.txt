@@ -230,12 +230,12 @@ EMBEDDING HOOKS
         Null (the default) loads live. See THE EXPANSION CACHE.
 
     bool NarrowModuleImports { get; set; }
-        TRUE BY DEFAULT since 2026-08-28: a use-modules WITHOUT #:select imports the
+        TRUE BY DEFAULT: a use-modules WITHOUT #:select imports the
         module's PUBLIC INTERFACE, as Guile documents, through a live view that
         grows with the module's exports. Set it FALSE -- before loading anything it
         should govern -- to get the WIDE import (the whole module, private names
-        included), which is what CodeBrix.LilyPort selects explicitly until its
-        corpus has been swept under the narrow default. #:select clauses and the
+        included), which a consumer whose code relies on the wide import can select
+        explicitly. #:select clauses and the
         implicit core import behave identically either way. Both positions are
         fenced by NarrowImportTests.
 
@@ -612,7 +612,8 @@ HASH TABLES AND PORTS
         SchemeInputPort(string text, string fileName)
         SchemeInputPort(TextReader stream, string fileName)
         TextReader Stream { get; }
-        string FileName { get; }
+        string FileName { get; }           // the reported name; null for none;
+                                           //   set-port-filename! changes it
         string PortEncoding { get; set; }  // the reported name, e.g. "UTF-8"
         long Line { get; set; }            // ZERO-based, as port-line reports it
         long Column { get; set; }          // as port-column reports it
@@ -632,6 +633,9 @@ HASH TABLES AND PORTS
         string FileName { get; set; }     // null for a non-file port
         string PortEncoding { get; set; } // the reported name, e.g. "UTF-8"
         bool IsFilePort { get; }          // i.e. FileName != null
+        string ReportedFileName { get; }  // what port-filename answers: the
+                                          //   set-port-filename! name once one
+                                          //   is given, else FileName
         bool IsClosed { get; set; }
 
 A hash-table HANDLE is the live (key . value) pair -- Guile's hashx-get-handle
@@ -656,6 +660,17 @@ Both are settable, because set-port-line! and set-port-column! MOVE where the ne
 datum's source location is recorded. PortEncoding is carried on both port kinds as
 a reported NAME: it is operative at the file boundary and nominal everywhere else,
 since strings are UTF-16 throughout.
+
+set-port-filename! changes a port's NAME and nothing else, as Guile's does:
+(set-port-filename! port name) takes an OPEN input or output port and a string, or
+#f to clear the name, and anything else raises wrong-type-arg. Afterwards
+port-filename answers the new name. On an input port it is also the filename the
+reader records in the source-properties of every datum read from then on, and the
+name read errors give (datums already read keep theirs). A string port ACCEPTS a
+name -- Guile allows it, and that is how a port over embedded text is tied to its
+real source -- but stays a string port: file-port? still answers #f. On an output
+file port the name is reported only (SchemeOutputPort.ReportedFileName); FileName,
+the file actually written and reopened by set-port-encoding!, does not change.
 
 THE NUMERIC TOWER
 =================
@@ -835,7 +850,7 @@ PRIMITIVE OBJECT itself, so a method added from one module is visible from every
 module that imports the core. See the pitfalls section -- getting this wrong is
 invisible from the defining module.
 
-DISPATCH ORDER IS GUILE'S (since 2026-08-28): arity first, then the PRIMITIVE, and
+DISPATCH ORDER IS GUILE'S: arity first, then the PRIMITIVE, and
 only when the primitive's own type check fails does the call fall over to the
 attached generic -- SCM_WTA_DISPATCH_n. NoApplicableMethod BUILDS that goops-error
 in Guile's exact shape and hands it back ready to raise, which is what a host
@@ -920,7 +935,7 @@ it loaded something; false is normal and simply leaves the module empty.
 THE SAVE/RESTORE IS NOT OPTIONAL, and it is the single most expensive mistake an
 embedder can make here. Guile's autoloader is a save-module-excursion for exactly
 this reason. The file being loaded opens with (define-module ...), which makes
-ITS module current and never puts the old one back -- so an autoload triggered
+ITS module current and never puts the old one back -- so an autoload started
 from a use-modules line in the middle of another file redirects EVERY LATER
 DEFINITION IN THAT FILE into the autoloaded module. The symptom is not an error:
 the definitions are still found, because the outer module uses the inner one.
@@ -1004,8 +1019,9 @@ rather than keywords. The direction character selects an input or an output port
 "+" is REFUSED loudly, because a port here is a reader or a writer and never both.
 
 file-port? asks whether a port's implementation is the FILE one, which is NOT the
-same question as whether it has a name -- a string port carries the name <string>
-in Guile too.
+same question as whether it has a name -- a string port has NO name (port-filename
+answers #f) until set-port-filename! gives it one, and a file port names itself
+(see pitfall 38).
 
 Every read behind open-file, open-input-file, call-with-input-file and load asks
 the OS for FileShare.ReadWrite. That changes nothing on Linux or macOS, where the
@@ -1575,7 +1591,7 @@ inside RunWithLargeStack:
 
     private static object EvalOne(Interpreter interpreter, string source)
     {
-        object result = Values.Unspecified.Instance;
+        object result = Unspecified.Instance;
         foreach (object form in SchemeReader.ReadAll(source, "<host>"))
         {
             result = interpreter.TreeIlEvaluator.ExpandAndEval(
@@ -1940,11 +1956,12 @@ EMBEDDING
 ---------
 1.  EVALUATING WITH THE WRONG EVALUATOR. Interpreter.LoadFile and
     LoadFileWithProgress run the CORE evaluator and do not expand macros: they are
-    the boot paths that load psyntax itself. Since 2026-08-28 Interpreter.Eval and
+    the boot paths that load psyntax itself. Interpreter.Eval and
     EvalString (and the Scheme `eval' / `eval-string') EXPAND once psyntax is
     loaded, as Guile's do, and fall back to the core evaluator only before that --
-    the `(markup ...)' from (lily) through EvalString that used to fail as "Wrong
-    type to apply: #<syntax-transformer markup>" now works (EvalExpansionTests).
+    so a `(markup ...)' from (lily) through EvalString evaluates rather than
+    failing as "Wrong type to apply: #<syntax-transformer markup>"
+    (EvalExpansionTests).
     For a file, use SchemeBootstrap.LoadExpanded. A macro that still fails "where
     it is USED, not where it is defined" means a core-evaluator path was taken.
 
@@ -1964,7 +1981,7 @@ EMBEDDING
 
 4.  A MODULE LOADER THAT DOES NOT SAVE CurrentModule. The loaded file's
     (define-module ...) makes ITS module current and never restores it, so every
-    later definition in the file that triggered the autoload lands in the wrong
+    later definition in the file that caused the autoload lands in the wrong
     module. Nothing errors -- lookups still succeed through the use list. What
     breaks is SHADOWING, which surfaces much later as the wrong method winning.
 
@@ -2049,12 +2066,12 @@ MODULES
     agree; only srfi-43's fourth (fill) argument is out of reach. A module's OWN
     binding beats every import.
 
-20. THE IMPORT IS GUILE'S BY DEFAULT, AND THE WIDE IMPORT IS A CHOICE. Since
-    2026-08-28 Interpreter.NarrowModuleImports defaults to TRUE: a use-modules
+20. THE IMPORT IS GUILE'S BY DEFAULT, AND THE WIDE IMPORT IS A CHOICE.
+    Interpreter.NarrowModuleImports defaults to TRUE: a use-modules
     without #:select imports the module's public interface only. Set it FALSE --
     BEFORE the code it governs is loaded -- to put the WHOLE module on the use
-    list, private names included, which is what CodeBrix.LilyPort does explicitly
-    until its corpus is swept under the narrow default. //was previously: false
+    list, private names included, for code that relies on the wide import.
+    //was previously: false
     by default (the wide import), true as the opt-in Guile-exact position. The
     wide import HID a real defect for the project's whole life: define-module
     clause keywords spelled as keyword-like SYMBOLS (`:export', srfi-1's spelling)
@@ -2184,11 +2201,13 @@ PORTS, FILES AND THE OUTSIDE WORLD
 38. file-port? IS NOT "HAS A NAME". It asks whether the port's implementation is
     the FILE one, so answering by name takes the wrong branch. ⚠ The parenthetical
     that stood here -- "a string port carries the name <string> in Guile too" --
-    was REFUTED by measurement on 2026-08-30 and the behaviour it described is now
+    was REFUTED by measurement and the behaviour it described is
     gone: a string port has NO name, port-filename answers #f, its datums record
     #f as their source-properties filename, and its read errors say
     "#<unknown port>". A FILE port still names itself, which is what makes
     file-port? and "has a name" look alike; they are still not the same question.
+    set-port-filename! proves it: it gives a string port a name, and file-port?
+    still answers #f for that port.
 
 39. close-port DISPOSES A FILE PORT'S WRITER, not merely flushes it -- but the
     current output and error ports are deliberately NOT disposed by it, because
@@ -2238,36 +2257,35 @@ PORTS, FILES AND THE OUTSIDE WORLD
     BETWEEN the two do not see it. RECORDED DIVERGENCE, bounded; `guard' is
     unaffected because its prompt sits outside its handler.
 
-48. THE WRONG NUMBER OF ARGUMENTS IS AN ERROR ON EVERY PATH, since 2026-08-28.
+48. THE WRONG NUMBER OF ARGUMENTS IS AN ERROR ON EVERY PATH.
     Applying a procedure with too few or too many arguments raises Guile's
     wrong-number-of-args in the VM's shape -- (#f "Wrong number of arguments to
     ~A" (PROCEDURE) #f), so a report reads "Wrong number of arguments to
-    #<procedure unfold-repeats (types music)>". Before that date the Tree-IL
-    path (every psyntax-expanded procedure) bound a MISSING required parameter
-    to #<unspecified> and DROPPED surplus arguments, and the body ran anyway;
-    only the core evaluator's closures and primitives had ever checked. Found
-    through LilyPond: scores calling unfold-repeats with its older arity
-    engraved where the pinned oracle refuses the file. A case-lambda with no fitting
+    #<procedure unfold-repeats (types music)>". The Tree-IL path (every
+    psyntax-expanded procedure) checks exactly as the core evaluator's closures
+    and primitives do: a MISSING required parameter is never bound to
+    #<unspecified>, surplus arguments are never DROPPED, and the body does not
+    run. So a LilyPond score calling unfold-repeats with its older arity is
+    refused, as the pinned oracle refuses the file. A case-lambda with no fitting
     clause names ITSELF in the error, not its last arm; #:optional still
     defaults to #f, a rest parameter still takes any count, and a #:key clause
     has no positional ceiling (its tail is keyword/value pairs). Fenced by
     WrongNumberOfArgumentsTests.cs.
 
-49. A PRIMITIVE GENERIC RUNS THE PRIMITIVE FIRST, since 2026-08-28. Arity is
+49. A PRIMITIVE GENERIC RUNS THE PRIMITIVE FIRST. Arity is
     checked, the primitive runs, and only its OWN type failure (a wrong-type-arg
     whose subr is the primitive's name) falls over to the generic that
     enable-primitive-generic! attached; no applicable method there is Guile's
     (goops-error #f "No applicable method for ~S in call ~S" (#<<generic> + (2)>
     (+ 3 "x")) ()) -- generic object, the failing PAIR for the pairwise operators,
-    EMPTY LIST data. //was previously: method-first with the primitive as the
-    fallback, which charged a method-selection pass to every arithmetic call and
-    surfaced a type failure as wrong-type-arg. MEASURED on the pinned oracle:
+    EMPTY LIST data. Because the primitive runs first, an ordinary arithmetic
+    call pays no method-selection pass. MEASURED on the pinned oracle:
     (define-method (max (a <integer>) (b <integer>)) ...) leaves (max 1 2) = 2.
     A primitive's arity error is the VM's shape too: (wrong-number-of-args #f
     "Wrong number of arguments to ~A" (#<procedure abs (_)>) #f). Fenced by
     PrimitiveGenericTests.cs.
 
-50. THE NUMERIC FAMILY RAISES GUILE'S POSITIONED wrong-type-arg, since 2026-08-28:
+50. THE NUMERIC FAMILY RAISES GUILE'S POSITIONED wrong-type-arg:
     (NAME "Wrong type argument in position ~A: ~S" (POS VALUE) (VALUE)) -- a
     TEMPLATE message, position and value as its arguments, the value again as the
     data. Positions are PAIRWISE for + - * / < > <= >= max min gcd lcm logand
@@ -2280,7 +2298,7 @@ PORTS, FILES AND THE OUTSIDE WORLD
     a radix or shift that is not an exact integer is the UNNAMED (wrong-type-arg
     #f "Wrong type (expecting ~A): ~S" ("exact integer" v) (v)). quotient,
     remainder, modulo, gcd, lcm, even? and odd? ACCEPT inexact integers ((gcd 4.0
-    2) is 2.0); the bitwise family wants EXACT ones. COMPLEX NUMBERS, same date:
+    2) is 2.0); the bitwise family wants EXACT ones. COMPLEX NUMBERS:
     both parts PRINT as inexact reals (1+2i reads back as 1.0+2.0i, +i is
     0.0+1.0i); an EXACT zero imaginary part or polar angle is no complex at all
     ((make-rectangular 1 0) is 1, (make-rectangular 1 0.0) is 1.0+0.0i); (* 0 z)
@@ -2290,39 +2308,36 @@ PORTS, FILES AND THE OUTSIDE WORLD
     inexact->exact of a zero-imaginary complex is the exact real; and the ordered
     comparisons, max, min, abs, the rounding family, positive?/negative?,
     numerator/denominator and inexact->exact of a non-zero-imaginary complex
-    REFUSE a complex with the positioned error. //was previously: subr
-    "arithmetic" / "comparison", unpositioned, #f data; a dozen primitives let a
-    raw .NET ArgumentException escape to the host (a complex to any of them, too);
-    floor, round, inexact->exact and numerator answered a non-number unchanged;
-    complexes printed as 1+2i and (sqrt -4) was +nan.0. Fenced, every row
+    REFUSE a complex with the positioned error. No primitive in the family lets a
+    raw .NET ArgumentException escape to the host (a complex included); floor,
+    round, inexact->exact and numerator REFUSE a non-number rather than answering
+    it unchanged; and (sqrt -4) is 0.0+2.0i, not +nan.0. Fenced, every row
     measured on the oracle, by GuileNumericErrorShapeTests.cs.
 
-51. define-method ON A NAME THAT HOLDS A PLAIN PROCEDURE IS REFUSED, since
-    2026-08-28: (goops-error #f "~S is not a valid generic function" (proc) ()),
+51. define-method ON A NAME THAT HOLDS A PLAIN PROCEDURE IS REFUSED:
+    (goops-error #f "~S is not a valid generic function" (proc) ()),
     which is what add-method! on a non-generic-capable <procedure> raises in
-    GOOPS. //was previously: the procedure quietly became the new generic's
-    Fallback -- written for LilyPond's operators.scm extending `+' and `*',
-    which are generic-capable PRIMITIVES and are extended in place instead. A
-    GenericFunction.Fallback now arises only from Enable on a primitive.
+    GOOPS. The procedure does NOT quietly become the new generic's Fallback.
+    LilyPond's operators.scm extends `+' and `*', which are generic-capable
+    PRIMITIVES and are extended in place; a GenericFunction.Fallback arises only
+    from Enable on a primitive.
 
-52. eval AND eval-string EXPAND. See pitfall 1: since 2026-08-28 Interpreter.Eval,
+52. eval AND eval-string EXPAND. See pitfall 1: Interpreter.Eval,
     Interpreter.EvalString and the Scheme `eval' / `eval-string' go through
     psyntax once it is loaded (ControlPrimitives.EvalAny), so a macro defined by
     one eval-string is usable by the next and a bare (markup ...) evaluates.
     LoadFile / LoadFileWithProgress stay on the core evaluator on purpose.
 
-53. EVERY OUTPUT PORT TRACKS ITS LINE AND COLUMN, since 2026-08-30, and the rules
-    are not "one character, one column". port-column used to answer for exactly two
-    kinds of port -- a soft port, which keeps its own counters, and a string port,
-    whose accumulated text could be re-read -- and returned a flat 0 for every
-    other, the process's own output included. That single 0 broke
-    (ice-9 pretty-print) outright: its `indent' emits a newline when the target
-    column is BEHIND the current one and spaces otherwise, and `pp-list' passes
-    (port-column port) itself as the target, so at zero it took neither branch --
-    no newline, and (spaces 0) writes nothing -- and every separator between list
-    items DISAPPEARED. display-scheme-music printed
-    (make-music'SequentialMusic'elements(list ...)) on one unreadable line.
-    ColumnTrackingWriter now sits in front of any writer that does not already
+53. EVERY OUTPUT PORT TRACKS ITS LINE AND COLUMN, and the rules
+    are not "one character, one column". port-column answers for every output
+    port, the process's own output included -- never a flat 0. (ice-9 pretty-print)
+    depends on it: its `indent' emits a newline when the target column is BEHIND
+    the current one and spaces otherwise, and `pp-list' passes (port-column port)
+    itself as the target, so a port stuck at zero takes neither branch -- no
+    newline, and (spaces 0) writes nothing -- and every separator between list
+    items DISAPPEARS (display-scheme-music would print
+    (make-music'SequentialMusic'elements(list ...)) on one unreadable line).
+    ColumnTrackingWriter sits in front of any writer that does not already
     track (SoftPortWriter keeps its own, deliberately updated on entry to the port
     rather than on flush -- pitfall 41). The counters live on the WRITER and not on
     SchemeOutputPort because current-output-port hands back a FRESH port object
@@ -2331,7 +2346,7 @@ PORTS, FILES AND THE OUTSIDE WORLD
     knowing: anything wanting the concrete sink underneath -- get-output-string and
     ftell want the StringWriter -- must go through SchemeOutputPort.InnerWriter or
     it finds the wrapper and answers empty; and set-port-column! / set-port-line!
-    are REAL SETTERS now rather than the no-ops they were, because on the oracle
+    are REAL SETTERS, not no-ops, because on the oracle
     (set-port-column! p 42) makes the next character land at 43.
     THE UPDATE RULES, every one MEASURED on the pinned oracle rather than read off
     Guile's source: a newline advances the line and zeroes the column; a CARRIAGE
@@ -2340,9 +2355,10 @@ PORTS, FILES AND THE OUTSIDE WORLD
     BACKSPACE retreats one but never below zero; an ALARM advances nothing; a form
     feed and a vertical tab are ordinary characters; and a column counts CODE
     POINTS, so two astral characters make column 2 and not 4. Fenced by
-    PortPositionTests, whose expectations are all oracle readings and which fails
-    8 of its 10 cases with the change reverted.
-    INPUT PORTS TRACK TOO, since the same day, and this is the half that reaches
+    PortPositionTests, whose line and column expectations are all oracle
+    readings, each paired with a control that must come out differently; the
+    column cases fail without the tracking.
+    INPUT PORTS TRACK TOO, and this is the half that reaches
     beyond printing. A datum's source-properties ARE the port's line and column at
     its first character, so the counters decide where every diagnostic points. Three
     things follow. (1) port-line / port-column answer for an input port, from the
@@ -2351,22 +2367,19 @@ PORTS, FILES AND THE OUTSIDE WORLD
     (2) set-port-line! / set-port-column! on an input port MOVE WHERE THE NEXT DATUM
     IS RECORDED, which is the whole point: LilyPond's parser-ly-from-scheme.scm
     synchronises a second port over the same text with exactly that pair so that
-    #{ ... #} embedded Scheme carries the location of its real source, and with both
-    calls no-ops the sync did nothing at all. (3) THE READER NOW COUNTS A TAB TO THE
-    TAB STOP, so a source column on a tab-indented line changed: "\t(x)" records
-    column 8, exactly as eight spaces do, where it used to record 1. peek-char does
+    #{ ... #} embedded Scheme carries the location of its real source; were either
+    call a no-op, the sync would do nothing at all. (3) THE READER COUNTS A TAB TO
+    THE TAB STOP, so on a tab-indented line "\t(x)" records column 8, exactly as
+    eight spaces do, not 1. peek-char does
     not advance, and unread-char retreats -- a newline taking the LINE back and
     leaving the column alone, a tab simply decrementing, both stopping at zero.
-    ⚠ CONSEQUENCE FOR CONSUMERS: (3) and (2) change SOURCE LOCATIONS, so
-    CodeBrix.LilyPort must take this as a pin bump with its full battery, not with
-    the calibrated pin-bump bar -- #{ #} locations and any tab-indented input can
-    move. Nothing in LilyPort's graded reference diagnostics carried the old values,
-    but that is an argument for running the battery, not for skipping it.
+    ⚠ CONSEQUENCE FOR CONSUMERS: (3) and (2) decide SOURCE LOCATIONS -- #{ #}
+    locations and any tab-indented input record the columns described above, so a
+    consumer that compares recorded diagnostics should expect them.
 
-54. A SYNTAX ERROR IS A read-error CONDITION, since 2026-08-30, and the reader is
-    as STRICT as Guile's. It used to throw a plain .NET exception that
-    (catch #t ...) went straight past, so no Scheme code could recover from a bad
-    datum; SchemeReaderException now DERIVES from SchemeThrow, so it is caught by
+54. A SYNTAX ERROR IS A read-error CONDITION, and the reader is
+    as STRICT as Guile's. SchemeReaderException DERIVES from SchemeThrow, so
+    Scheme code can recover from a bad datum: it is caught by (catch #t ...) and
     (catch 'read-error ...) while staying the same type a C# host catches. The
     condition is Guile's own shape --
       (read-error #f "NAME:LINE:COLUMN: text ~A" (args) #f)
@@ -2379,31 +2392,29 @@ PORTS, FILES AND THE OUTSIDE WORLD
     a time, and its inconsistencies are reproduced rather than tidied: #z reports
     "Unknown # object" and #d1x2 reports "unknown # object", and "unknown
     character name ~a" takes a lower-case directive where its neighbours take ~S.
-    ⚠ FOUR THINGS THE READER USED TO ACCEPT AND NOW REFUSES, each measured against
-    the oracle, which refuses them too: an unknown string escape ("\q" read as
-    "q", losing the backslash silently); an unterminated #| ... |# comment (read
-    as end of input); a mismatched close paren ("(a b]" closed the list anyway);
-    and an unknown character name (#\nosuchchar answered #\n, the first letter --
-    a silently WRONG character, the worst of the four). A consumer whose input the
-    ORACLE accepts is unaffected, since the port is now strict in exactly the
-    places upstream is.
-    ⚠ AND THREE PLACES LET A RAW .NET EXCEPTION OUT of the reader, all of them
-    int.Parse over whatever had been collected without validating it: "\x" (which
-    collected the closing quote), #\xzz, and the same path for \u / \U. They raise
-    read-errors now. Fenced by ReadErrorTests, whose eleven Scheme-level cases all
-    fail with the change reverted and whose twelfth does not compile against the
-    old surface.
+    ⚠ FOUR THINGS THE READER REFUSES, each measured against the oracle, which
+    refuses them too: an unknown string escape ("\q" is NOT read as "q", silently
+    losing the backslash); an unterminated #| ... |# comment (NOT read as end of
+    input); a mismatched close paren ("(a b]" does NOT close the list); and an
+    unknown character name (#\nosuchchar is NOT #\n, the first letter -- that
+    would be a silently WRONG character, the worst of the four). A consumer whose
+    input the ORACLE accepts is unaffected, since the port is strict in exactly
+    the places upstream is.
+    ⚠ AND NO RAW .NET EXCEPTION ESCAPES the reader from a malformed numeric
+    escape: "\x" (where the closing quote would otherwise be taken as a digit),
+    #\xzz, and the same path for \u / \U all raise read-errors. Fenced by
+    ReadErrorTests: eleven Scheme-level cases, plus a twelfth asserting that
+    SchemeReaderException is still the type a C# host catches.
 
-55. A VALUE'S EXTERNAL REPRESENTATION READS BACK, since 2026-08-30, in three places
-    where it did not. (a) A BYTEVECTOR wrote as "System.Byte[]" -- a .NET type name
-    in Scheme output; it writes #vu8(1 2) now. (b) A SYMBOL wrote its bare name, so
-    the symbol . wrote as . and a symbol containing a space wrote as though it were
-    two; names that would not read back now use Guile's #{...}# syntax. (c) ARRAYS
-    refused rank ZERO, which upstream reads (#0(a) has array-rank 0 and is indexed
-    by NO subscripts, so array-ref takes one argument), printed a rank-1 array with
-    a rank digit upstream omits (#1(a b) writes as #(a b), but #1@1(a b) keeps it),
-    and reported a ragged literal as a read-error where upstream raises a
-    misc-error -- it finds that while BUILDING the array, not while reading it.
+55. A VALUE'S EXTERNAL REPRESENTATION READS BACK, including in three
+    places that need care. (a) A BYTEVECTOR writes as #vu8(1 2), never as a .NET
+    type name. (b) A SYMBOL whose bare name would not read back -- the symbol . ,
+    or a name containing a space, which would read as two -- uses Guile's #{...}#
+    syntax. (c) ARRAYS accept rank ZERO, as upstream does (#0(a) has array-rank 0
+    and is indexed by NO subscripts, so array-ref takes one argument), write a
+    rank-1 array without the rank digit upstream omits (#1(a b) writes as #(a b),
+    but #1@1(a b) keeps it), and report a ragged literal as a misc-error, as
+    upstream does -- it finds that while BUILDING the array, not while reading it.
     THE SYMBOL RULES, measured from a character-by-character table rather than
     derived. Extended syntax is needed when the name is EMPTY, is exactly ".",
     starts with a DIGIT (1+ and 1abc both qualify) or otherwise reads as a NUMBER
@@ -2421,9 +2432,8 @@ PORTS, FILES AND THE OUTSIDE WORLD
     make-generalized-vector or length, naming a procedure the caller never used.
     Both refuse; only the shape differs. Fenced by ExternalRepresentationTests.
 
-56. A CHARACTER LITERAL KNOWS EVERY NAME GUILE KNOWS, since 2026-08-30, and the
-    ones it did not know were answered WRONG rather than refused. The table had
-    twelve names in it; Guile has fifty-one, in five groups searched in order --
+56. A CHARACTER LITERAL KNOWS EVERY NAME GUILE KNOWS -- all
+    fifty-one, in five groups searched in order --
     R5RS (space, newline), R6RS (nul alarm backspace tab linefeed vtab page
     return esc delete), R7RS (escape), the abbreviated C0 control names (soh stx
     etx eot enq ack bel bs ht lf vt ff cr so si dle dc1..dc4 nak syn etb can em
@@ -2431,23 +2441,23 @@ PORTS, FILES AND THE OUTSIDE WORLD
     are matched CASE-INSENSITIVELY, so #\Cr and #\NUL read. The precedence is not
     decoration: several names answer one code point and it decides which name a
     character is WRITTEN with.
-    ⚠ WHY IT MATTERED. Before, an unknown name fell back to "the name's first
-    character", so #\cr read as #\c and #\lf as #\l -- a silently WRONG character.
-    LilyPond's own lily.scm line 1055 does (string-delete #\cr ...) and
-    (string-split ... #\nl), and framework-ps.scm line 596 maps #\cr and #\nul, so
-    both files had been parsing to the wrong thing for the project's whole life.
-    Pitfall 54's refusal made the same two files stop reading ALTOGETHER, which
-    took LilyPort's engine down at boot -- it is what turned a quiet defect loud.
+    ⚠ WHY IT MATTERS. Falling back to "the name's first character" would read
+    #\cr as #\c and #\lf as #\l -- a silently WRONG character. LilyPond's own
+    lily.scm line 1055 does (string-delete #\cr ...) and (string-split ... #\nl),
+    and framework-ps.scm line 596 maps #\cr and #\nul, so both files need the full
+    table. With pitfall 54's refusal of unknown names, a missing entry stops those
+    two files reading ALTOGETHER and takes a consuming LilyPond engine down at
+    boot.
     THE NUMERIC ESCAPES, measured with them: octal is written bare (#\101 is A,
     while #\8 is the character 8 and #\19 is an unknown NAME, because a leading
     digit that does not make a valid octal number FALLS THROUGH to the table), and
-    hex takes a LOWER-CASE x only -- #\X41, #\u41 and #\U41 are all refused by
-    Guile and were all accepted here. #\rubout was accepted too and is not a Guile
-    name. A code point outside 0..10FFFF or inside the surrogate block is
+    hex takes a LOWER-CASE x only -- #\X41, #\u41 and #\U41 are all refused, as
+    Guile refuses them, and so is #\rubout, which is not a Guile name. A code
+    point outside 0..10FFFF or inside the surrogate block is
     integer->char's out-of-range condition, NOT a read-error, because upstream's
-    reader reaches the character through integer->char itself; integer->char used
-    to let a .NET ArgumentOutOfRangeException out instead, and that one did not
-    surface until the PRINTER touched the value.
+    reader reaches the character through integer->char itself; integer->char
+    raises that condition rather than letting a .NET ArgumentOutOfRangeException
+    out (which would surface only when the PRINTER touched the value).
     ⚠ THE DOTTED-CIRCLE RULE HAD TO BE MEASURED, NOT READ: upstream ships two
     readers and they DISAGREE. libguile/read.c tests the FIRST character for
     U+25CC and answers the second; module/ice-9/read.scm tests the SECOND and
@@ -2455,9 +2465,9 @@ PORTS, FILES AND THE OUTSIDE WORLD
     the oracle, #\<combining acute><dotted circle> is 769 and the other order is
     refused. Fenced by SchemeReaderTests (61 acceptance rows, 6 refusals and the
     two-way control) and WrongTypeArgumentTests (the out-of-range family).
-    THE PRINTER USES THE SAME TABLE BACKWARDS, and its half was five names long, so
-    a control character wrote as ITSELF -- a raw byte in the middle of Scheme output
-    where the oracle writes #\soh, #\vtab, #\delete. A GRAPHIC character (Unicode
+    THE PRINTER USES THE SAME TABLE BACKWARDS, so a control character never writes
+    as ITSELF -- a raw byte in the middle of Scheme output -- but as the oracle
+    writes it: #\soh, #\vtab, #\delete. A GRAPHIC character (Unicode
     categories L, M, N, P and S -- upstream's own test, which is what keeps SPACE,
     category Zs, on the named path) writes as itself; anything else takes a name if
     it has one and otherwise the octal escape. The search ORDER decides which name a
@@ -2466,40 +2476,40 @@ PORTS, FILES AND THE OUTSIDE WORLD
     still READ. Fenced by ExternalRepresentationTests, including a round trip over
     every code point through 0xFF asserted as a relationship rather than a literal.
 
-57. AN OPTIONAL PORT ARGUMENT MEANS THE CURRENT INPUT PORT, since 2026-08-30, and
-    for read, read-syntax, read-char and peek-char it used to mean END OF FILE. Called
-    with no port they answered #<eof> unconditionally -- a plausible answer, so
-    nothing looked broken: (read) simply read nothing, and the whole
-    current-input-port mechanism was inert behind it. All four now fall back to
-    (current-input-port), and an explicit port argument still wins.
-    with-input-from-string came with them; it was the one member of the string-port
-    family missing, though (ice-9 ports) exports it into the default environment
-    upstream and both with-output-to-string and call-with-input-string were here.
+57. AN OPTIONAL PORT ARGUMENT MEANS THE CURRENT INPUT PORT, not
+    END OF FILE: read, read-syntax, read-char and peek-char called with no port fall
+    back to (current-input-port), and an explicit port argument wins. (An
+    unconditional #<eof> would be a plausible answer that hides the problem --
+    (read) would simply read nothing, with the whole current-input-port mechanism
+    inert behind it.) with-input-from-string is present alongside
+    with-output-to-string and call-with-input-string, as (ice-9 ports) exports it
+    into the default environment upstream.
     ⚠ IT REDIRECTS THE PORT, NOT THE READER, and that is forced rather than chosen:
     a reader-backed port STREAMS, and a streaming port refuses `read' by design
     (pitfall 40) -- redirecting Interpreter.InputReader would give a
     current-input-port that read-char could use and `read' could not. Upstream lands
     in the same place from the other side, defining with-input-from-string as
     call-with-input-string plus with-input-from-port.
-    THE WHOLE with-*-port FAMILY WAS ABSENT and all three are here now:
-    with-input-from-port, with-output-to-port and with-error-to-port. The input one
+    THE WHOLE with-*-port FAMILY IS PRESENT: with-input-from-port,
+    with-output-to-port and with-error-to-port. The input one
     swaps the port override described above; the two output ones swap the
     interpreter's WRITER, because the output side resolves its default port through
     the writer (display with no port asks TrackedOutputWriter()) -- which is also how
-    with-output-to-string already worked, so the two nest correctly in either order.
-    ⚠ with-output-to-port was not merely missing: the vendored ice-9/pretty-print.scm
-    CALLS it at line 494, so truncated-print raised unbound-variable where the oracle
-    prints (a b c); boot-9.scm calls it twice more, in peek-error and %load-announce.
-    %default-port-conversion-strategy came with it -- a FLUID holding 'substitute
+    with-output-to-string works, so the two nest correctly in either order.
+    ⚠ with-output-to-port is load-bearing: the vendored ice-9/pretty-print.scm CALLS
+    it at line 494 (without it truncated-print raises unbound-variable where the
+    oracle prints (a b c)); boot-9.scm calls it twice more, in peek-error and
+    %load-announce. %default-port-conversion-strategy is present too -- a FLUID
+    holding 'substitute
     (measured), which pretty-print.scm rebinds with with-fluids at its line 335.
     Nothing here CONSULTS that fluid: strings are UTF-16 throughout and no port raises
     encoding-error, so the rebinding simply succeeds.
-    port-encoding CAME WITH THEM, and BOTH PORT TYPES NOW CARRY AN ENCODING NAME
-    defaulting to "UTF-8" -- upstream's answer for all four port kinds (measured; an
-    earlier reading of "" for a string output port was a MEASUREMENT ERROR, since
-    call-with-output-string returns the accumulated STRING and not the procedure's
-    value). set-port-encoding! records the name for every port kind AND keeps
-    re-encoding the bytes of a file port, which scm/backend-library.scm depends on.
+    port-encoding is present, and BOTH PORT TYPES CARRY AN ENCODING NAME defaulting
+    to "UTF-8" -- upstream's answer for all four port kinds (measured; to measure
+    a string output port, do not read the result of call-with-output-string, which
+    returns the accumulated STRING -- "" here -- and not the procedure's value).
+    set-port-encoding! records the name for every port kind AND re-encodes the
+    bytes of a file port, which scm/backend-library.scm depends on.
     Upstream's canonicalisation is UPPER-CASING and nothing else: "latin1" and
     "Latin1" both answer "LATIN1", "ISO-8859-1" is NOT collapsed onto it, and an
     explicit #:encoding at open time shows through (#:binary is "ISO-8859-1").
@@ -2510,19 +2520,18 @@ PORTS, FILES AND THE OUTSIDE WORLD
     because pretty-print.scm:338 ROUND-TRIPS it onto another port rather than
     interpreting it.
     ⚠ ONE CONSEQUENCE, DELIBERATELY NOT BUILT: nothing here raises encoding-error, so
-    %default-port-conversion-strategy 'error cannot fire and truncated-print always
+    %default-port-conversion-strategy 'error cannot take effect and truncated-print always
     picks the real U+2026 ellipsis where Guile on a Latin-1 port falls back to "...".
     Upstream's fallback IS reachable (measured). Building it means checking
     representability on the write path for ports carrying a non-UTF-8 name; it would
-    buy one character in one procedure that nothing in LilyPort calls. Decided
-    2026-08-30: LEFT ALONE.
+    buy one character in one procedure. LEFT ALONE.
     Fenced by PortProcedureTests, with the nesting case as the control that a redirect
     is undone and a refusal row per family member.
 
-58. THE ARRAY FAMILY GAINED ITS LAST THREE ACCESSORS, 2026-08-30, and with them
-    (ice-9 pretty-print) reached full parity -- truncated-print RUNS now, having been
-    blocked in turn on with-output-to-port, %default-port-conversion-strategy,
-    port-encoding and then these. array-length answers dimension ZERO (measured: 2 for
+58. THE ARRAY FAMILY HAS array-length, array-type AND bitvector?, and with them
+    (ice-9 pretty-print) has full parity -- truncated-print RUNS, standing on
+    with-output-to-port, %default-port-conversion-strategy, port-encoding and
+    these. array-length answers dimension ZERO (measured: 2 for
     #2((a b c) (d e f)), not 3 and not 6) and refuses a rank-0 array, which has no
     dimension to report. array-type answers #t: every array here is a general one,
     which is upstream's own answer for a vector and for a multi-dimensional array.
@@ -2533,12 +2542,12 @@ PORTS, FILES AND THE OUTSIDE WORLD
     for a string and `vu8' for a bytevector because those ARE arrays there and are not
     arrays here, so they take the family's "Not an array" like any other non-array.
     array? must not accept what array-type refuses, nor the other way round.
-    ⚠ A DIFF OF (ice-9 pretty-print)'s BINDINGS AGAINST THE ORACLE NOW SHOWS EXACTLY
+    ⚠ A DIFF OF (ice-9 pretty-print)'s BINDINGS AGAINST THE ORACLE SHOWS EXACTLY
     ONE NAME, `else', and that is NOT a defect: cond and case handle it as syntax here
     rather than as a module binding, verified by running all three forms. That diff is
     the cheap instrument for this question -- module-defined? over every head symbol in
-    the file, on both engines -- and it is what turned a five-round guessing chain into
-    one measurement. Fenced by GuileCompatibilityTests, whose truncated-print case is
+    the file, on both engines -- one measurement in place of a guessing chain.
+    Fenced by GuileCompatibilityTests, whose truncated-print case is
     the end-to-end fence for all six names.
 
 WHAT THIS PACKAGE DOES NOT DO
@@ -2658,7 +2667,8 @@ Files worth reading first, by what you are trying to do
                                 condition, upstream's wording and position format,
                                 port naming, and the four inputs it used to accept
     PortPositionTests.cs        port-line / port-column on every kind of port,
-                                input and output, and the real setters; the tab /
+                                input and output, and the real setters;
+                                set-port-filename! and the name it records; the tab /
                                 carriage return / backspace / alarm / code-point
                                 rules; peek and unread; a datum's source location
                                 and the #{ #} synchronisation that moves it; and
